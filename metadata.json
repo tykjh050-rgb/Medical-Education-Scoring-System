@@ -1,0 +1,6 @@
+{
+  "name": "線上自動化出題與評改系統",
+  "description": "支援試題上傳（Excel/CSV/JSON）、隨機洗牌出題、自動動態配分、12小時重複測驗限制防護、即時評改與學生成績統計匯出的教學評量系統",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
