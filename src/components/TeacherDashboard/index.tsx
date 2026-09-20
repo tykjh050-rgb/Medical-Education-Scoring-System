@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { UploadCloud, Users, Sparkles, Eye, Key, LogOut } from 'lucide-react';
-import { Question, StudentExamRecord } from '../../types';
+import { Question, StudentExamRecord, ExamPaper } from '../../types';
 import { QuestionUploader } from './QuestionUploader';
 import { ScoreReportTable } from './ScoreReportTable';
 import { ExamContentEditorModal } from './ExamContentEditorModal';
@@ -11,6 +11,10 @@ interface TeacherDashboardProps {
   onUpdateQuestions: (newQuestions: Question[]) => void;
   totalScore: number;
   onUpdateTotalScore: (score: number) => void;
+  choiceScore?: number;
+  essayScore?: number;
+  onUpdateChoiceScore?: (score: number) => void;
+  onUpdateEssayScore?: (score: number) => void;
   examTitle: string;
   onUpdateExamTitle: (title: string) => void;
   studentRecords: StudentExamRecord[];
@@ -20,6 +24,12 @@ interface TeacherDashboardProps {
   teacherPassword?: string;
   onUpdateTeacherPassword?: (newPassword: string) => void;
   onLogout?: () => void;
+  examPapers: ExamPaper[];
+  activeExamId: string;
+  onSelectExam: (id: string) => void;
+  onDeleteExam: (id: string) => void;
+  onAddNewExam: () => void;
+  onAddNewExamWithQuestions: (newExam: ExamPaper) => void;
 }
 
 export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
@@ -27,6 +37,10 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   onUpdateQuestions,
   totalScore,
   onUpdateTotalScore,
+  choiceScore,
+  essayScore,
+  onUpdateChoiceScore,
+  onUpdateEssayScore,
   examTitle,
   onUpdateExamTitle,
   studentRecords,
@@ -36,6 +50,12 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   teacherPassword = '6415',
   onUpdateTeacherPassword,
   onLogout,
+  examPapers,
+  activeExamId,
+  onSelectExam,
+  onDeleteExam,
+  onAddNewExam,
+  onAddNewExamWithQuestions,
 }) => {
   const [activeTab, setActiveTab] = useState<'questions' | 'scores'>('questions');
   const [showExamInspectorModal, setShowExamInspectorModal] = useState(false);
@@ -145,10 +165,20 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
           onUpdateQuestions={onUpdateQuestions}
           totalScore={totalScore}
           onUpdateTotalScore={onUpdateTotalScore}
+          choiceScore={choiceScore}
+          essayScore={essayScore}
+          onUpdateChoiceScore={onUpdateChoiceScore}
+          onUpdateEssayScore={onUpdateEssayScore}
           examTitle={examTitle}
           onUpdateExamTitle={onUpdateExamTitle}
           onSwitchToStudentExam={onSwitchToStudentExam}
           onOpenExamInspector={() => setShowExamInspectorModal(true)}
+          examPapers={examPapers}
+          activeExamId={activeExamId}
+          onSelectExam={onSelectExam}
+          onDeleteExam={onDeleteExam}
+          onAddNewExam={onAddNewExam}
+          onAddNewExamWithQuestions={onAddNewExamWithQuestions}
         />
       ) : (
         <ScoreReportTable
@@ -165,6 +195,11 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         questions={questions}
         onUpdateQuestions={onUpdateQuestions}
         totalScore={totalScore}
+        onUpdateTotalScore={onUpdateTotalScore}
+        choiceScore={choiceScore}
+        essayScore={essayScore}
+        onUpdateChoiceScore={onUpdateChoiceScore}
+        onUpdateEssayScore={onUpdateEssayScore}
         examTitle={examTitle}
         onUpdateExamTitle={onUpdateExamTitle}
         onSwitchToStudentExam={onSwitchToStudentExam}

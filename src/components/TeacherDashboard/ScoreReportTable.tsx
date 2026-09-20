@@ -621,7 +621,7 @@ export const ScoreReportTable: React.FC<ScoreReportTableProps> = ({
                                     ? 'bg-amber-100 text-amber-800 border border-amber-200'
                                     : 'bg-slate-100 text-slate-600'
                                 }`}
-                                title={`此學生在「${rec.examTitle}」的第 ${attemptIndexMap[rec.id].attemptNumber} 次測驗（12小時內上限 2 次）`}
+                                title={`此學生在「${rec.examTitle}」的第 ${attemptIndexMap[rec.id].attemptNumber} 次測驗（12小時內上限 1 次）`}
                               >
                                 第 {attemptIndexMap[rec.id].attemptNumber} 次
                               </span>

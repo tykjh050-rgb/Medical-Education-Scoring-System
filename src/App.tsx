@@ -2,8 +2,8 @@
  * 線上自動化出題與評改系統
  */
 
-import React, { useState, useEffect } from 'react';
-import { Question, StudentExamRecord } from './types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Question, StudentExamRecord, ExamPaper } from './types';
 import { DEFAULT_SAMPLE_QUESTIONS } from './data/sampleQuestions';
 import { INITIAL_STUDENT_RECORDS } from './data/initialRecords';
 import { Navbar, AppViewMode } from './components/Navbar';
@@ -12,44 +12,83 @@ import { TeacherDashboard } from './components/TeacherDashboard';
 import { TeacherLoginCard } from './components/TeacherDashboard/TeacherLoginCard';
 import { ArchitectureDocs } from './components/ArchitectureDocs';
 
+const INITIAL_EXAM_PAPERS: ExamPaper[] = [
+  {
+    id: 'exam_default_1',
+    title: '疾病分類測驗',
+    totalScore: 100,
+    choiceScore: 70,
+    essayScore: 30,
+    questions: DEFAULT_SAMPLE_QUESTIONS,
+    createdAt: new Date().toISOString(),
+  },
+];
+
 export default function App() {
   const [currentView, setCurrentView] = useState<AppViewMode>('student-exam');
-  
-  // 試卷題目庫 (優先自 localStorage 載入，否則使用預設 5 題示範題目)
-  const [questions, setQuestions] = useState<Question[]>(() => {
+
+  // 多試卷題庫清單 (支援下拉式選單管理、上傳自動新增、刪除)
+  const [examPapers, setExamPapers] = useState<ExamPaper[]>(() => {
     try {
-      const saved = localStorage.getItem('edugrade_questions');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      const savedPapers = localStorage.getItem('edugrade_exam_papers');
+      if (savedPapers) {
+        const parsed = JSON.parse(savedPapers);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // 支援將舊有「癌登能力測驗」或「第一次學科綜合能力測驗」自動遷移更新為「疾病分類測驗」
+          return parsed.map((p) => {
+            if (p.title === '癌登能力測驗' || p.title === '第一次學科綜合能力測驗') {
+              return { ...p, title: '疾病分類測驗' };
+            }
+            return p;
+          });
+        }
+      }
+      // 向下相容檢查：若曾有舊版本 localStorage 的單一題庫紀錄
+      const savedQuestions = localStorage.getItem('edugrade_questions');
+      const savedTitle = localStorage.getItem('edugrade_exam_title');
+      const savedTotalScore = localStorage.getItem('edugrade_total_score');
+      if (savedQuestions) {
+        const parsedQ = JSON.parse(savedQuestions);
+        if (Array.isArray(parsedQ) && parsedQ.length > 0) {
+          const cleanTitle =
+            savedTitle === '癌登能力測驗' || savedTitle === '第一次學科綜合能力測驗'
+              ? '疾病分類測驗'
+              : (savedTitle || '疾病分類測驗');
+          return [
+            {
+              id: 'exam_legacy_1',
+              title: cleanTitle,
+              totalScore: Number(savedTotalScore) || 100,
+              questions: parsedQ,
+              createdAt: new Date().toISOString(),
+            },
+          ];
+        }
       }
     } catch {
       // fallback
     }
-    return DEFAULT_SAMPLE_QUESTIONS;
+    return INITIAL_EXAM_PAPERS;
   });
 
-  // 老師自訂總分 (預設 100 分)
-  const [totalScore, setTotalScore] = useState<number>(() => {
+  // 當前選定的試卷 ID
+  const [activeExamId, setActiveExamId] = useState<string>(() => {
     try {
-      const saved = localStorage.getItem('edugrade_total_score');
-      if (saved) return Number(saved) || 100;
-    } catch {
-      // fallback
-    }
-    return 100;
+      const savedId = localStorage.getItem('edugrade_active_exam_id');
+      if (savedId) return savedId;
+    } catch {}
+    return 'exam_default_1';
   });
 
-  // 測驗標題
-  const [examTitle, setExamTitle] = useState<string>(() => {
-    try {
-      const saved = localStorage.getItem('edugrade_exam_title');
-      if (saved) return saved;
-    } catch {
-      // fallback
-    }
-    return '第一次學科綜合能力測驗';
-  });
+  // 取得當前作用中的試卷
+  const activeExam: ExamPaper = useMemo(() => {
+    const found = examPapers.find((p) => p.id === activeExamId);
+    return found || examPapers[0] || INITIAL_EXAM_PAPERS[0];
+  }, [examPapers, activeExamId]);
+
+  const questions = activeExam.questions;
+  const totalScore = activeExam.totalScore;
+  const examTitle = activeExam.title;
 
   // 學生考試成績紀錄總表 (優先自 localStorage 載入)
   const [studentRecords, setStudentRecords] = useState<StudentExamRecord[]>(() => {
@@ -57,7 +96,18 @@ export default function App() {
       const saved = localStorage.getItem('edugrade_student_records');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.map((r) => {
+            if (
+              r.examTitle === '癌登能力測驗' ||
+              r.examTitle === '第一次學科綜合能力測驗' ||
+              r.examTitle === '第一次定期評量 - 綜合能力測驗'
+            ) {
+              return { ...r, examTitle: '疾病分類測驗' };
+            }
+            return r;
+          });
+        }
       }
     } catch {
       // fallback
@@ -85,32 +135,28 @@ export default function App() {
     }
   });
 
-  // 持久化題目
+  // 持久化多試卷題庫
   useEffect(() => {
     try {
-      localStorage.setItem('edugrade_questions', JSON.stringify(questions));
+      localStorage.setItem('edugrade_exam_papers', JSON.stringify(examPapers));
+      if (activeExam) {
+        localStorage.setItem('edugrade_questions', JSON.stringify(activeExam.questions));
+        localStorage.setItem('edugrade_total_score', String(activeExam.totalScore));
+        localStorage.setItem('edugrade_exam_title', activeExam.title);
+      }
     } catch {
       // ignore
     }
-  }, [questions]);
+  }, [examPapers, activeExam]);
 
-  // 持久化自訂總分
+  // 持久化當前作用中試卷 ID
   useEffect(() => {
     try {
-      localStorage.setItem('edugrade_total_score', String(totalScore));
+      localStorage.setItem('edugrade_active_exam_id', activeExamId);
     } catch {
       // ignore
     }
-  }, [totalScore]);
-
-  // 持久化試卷名稱
-  useEffect(() => {
-    try {
-      localStorage.setItem('edugrade_exam_title', examTitle);
-    } catch {
-      // ignore
-    }
-  }, [examTitle]);
+  }, [activeExamId]);
 
   // 持久化成績紀錄
   useEffect(() => {
@@ -129,6 +175,120 @@ export default function App() {
       // ignore
     }
   }, [teacherPassword]);
+
+  // 更新當前試卷題目
+  const handleUpdateQuestions = (newQuestions: Question[]) => {
+    setExamPapers((prev) =>
+      prev.map((p) =>
+        p.id === activeExam.id
+          ? { ...p, questions: newQuestions, updatedAt: new Date().toISOString() }
+          : p
+      )
+    );
+  };
+
+  // 更新當前試卷總分
+  const handleUpdateTotalScore = (newScore: number) => {
+    setExamPapers((prev) =>
+      prev.map((p) =>
+        p.id === activeExam.id
+          ? { ...p, totalScore: newScore, updatedAt: new Date().toISOString() }
+          : p
+      )
+    );
+  };
+
+  // 分開配分更新：更新選擇題總配分
+  const handleUpdateChoiceScore = (newChoiceScore: number) => {
+    setExamPapers((prev) =>
+      prev.map((p) => {
+        if (p.id === activeExam.id) {
+          const essay = p.essayScore !== undefined ? p.essayScore : 0;
+          return {
+            ...p,
+            choiceScore: newChoiceScore,
+            totalScore: newChoiceScore + essay,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return p;
+      })
+    );
+  };
+
+  // 分開配分更新：更新問答題總配分
+  const handleUpdateEssayScore = (newEssayScore: number) => {
+    setExamPapers((prev) =>
+      prev.map((p) => {
+        if (p.id === activeExam.id) {
+          const choice = p.choiceScore !== undefined ? p.choiceScore : 0;
+          return {
+            ...p,
+            essayScore: newEssayScore,
+            totalScore: choice + newEssayScore,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return p;
+      })
+    );
+  };
+
+  // 更新當前試卷標題
+  const handleUpdateExamTitle = (newTitle: string) => {
+    setExamPapers((prev) =>
+      prev.map((p) =>
+        p.id === activeExam.id
+          ? { ...p, title: newTitle, updatedAt: new Date().toISOString() }
+          : p
+      )
+    );
+  };
+
+  // 切換選取的試卷
+  const handleSelectExam = (id: string) => {
+    setActiveExamId(id);
+  };
+
+  // 刪除試卷 (選單內刪除鈕)
+  const handleDeleteExam = (idToDelete: string) => {
+    if (examPapers.length <= 1) {
+      alert('系統中至少需保留一份試卷題庫，無法刪除最後一份試卷。');
+      return;
+    }
+    const targetPaper = examPapers.find((p) => p.id === idToDelete);
+    const confirmDelete = window.confirm(
+      `確定要刪除試卷題庫「${targetPaper?.title || idToDelete}」嗎？此操作無法復原。`
+    );
+    if (!confirmDelete) return;
+
+    const remaining = examPapers.filter((p) => p.id !== idToDelete);
+    setExamPapers(remaining);
+    if (activeExamId === idToDelete) {
+      setActiveExamId(remaining[0].id);
+    }
+  };
+
+  // 新增空白試卷
+  const handleAddNewExam = () => {
+    const newId = 'exam_' + Date.now();
+    const count = examPapers.length + 1;
+    const newPaper: ExamPaper = {
+      id: newId,
+      title: `新自訂試卷題庫 #${count}`,
+      totalScore: 100,
+      questions: [],
+      createdAt: new Date().toISOString(),
+    };
+    setExamPapers((prev) => [newPaper, ...prev]);
+    setActiveExamId(newId);
+  };
+
+  // 上傳解析成功後自動新增至選單內並自動選取
+  const handleAddNewExamWithQuestions = (newExamPaper: ExamPaper) => {
+    setExamPapers((prev) => [newExamPaper, ...prev]);
+    setActiveExamId(newExamPaper.id);
+  };
 
   // 教師登入驗證處理
   const handleTeacherLogin = (inputPassword: string): boolean => {
@@ -184,6 +344,8 @@ export default function App() {
         questionCount={questions.length}
         totalScore={totalScore}
         isTeacherAuthenticated={isTeacherAuthenticated}
+        examTitle={examTitle}
+        examPaperCount={examPapers.length}
       />
 
       {/* Main Content Area */}
@@ -192,10 +354,15 @@ export default function App() {
           <StudentExam
             questions={questions}
             totalScore={totalScore}
+            choiceScore={activeExam.choiceScore}
+            essayScore={activeExam.essayScore}
             examTitle={examTitle}
             studentRecords={studentRecords}
             onRecordSubmitted={handleRecordSubmitted}
             onGoToTeacherDashboard={() => setCurrentView('teacher-dashboard')}
+            examPapers={examPapers}
+            activeExamId={activeExamId}
+            onSelectExam={handleSelectExam}
           />
         )}
 
@@ -203,11 +370,15 @@ export default function App() {
           isTeacherAuthenticated ? (
             <TeacherDashboard
               questions={questions}
-              onUpdateQuestions={setQuestions}
+              onUpdateQuestions={handleUpdateQuestions}
               totalScore={totalScore}
-              onUpdateTotalScore={setTotalScore}
+              onUpdateTotalScore={handleUpdateTotalScore}
+              choiceScore={activeExam.choiceScore}
+              essayScore={activeExam.essayScore}
+              onUpdateChoiceScore={handleUpdateChoiceScore}
+              onUpdateEssayScore={handleUpdateEssayScore}
               examTitle={examTitle}
-              onUpdateExamTitle={setExamTitle}
+              onUpdateExamTitle={handleUpdateExamTitle}
               studentRecords={studentRecords}
               onClearRecords={handleClearRecords}
               onResetSampleRecords={handleResetSampleRecords}
@@ -215,6 +386,12 @@ export default function App() {
               teacherPassword={teacherPassword}
               onUpdateTeacherPassword={handleUpdateTeacherPassword}
               onLogout={handleTeacherLogout}
+              examPapers={examPapers}
+              activeExamId={activeExamId}
+              onSelectExam={handleSelectExam}
+              onDeleteExam={handleDeleteExam}
+              onAddNewExam={handleAddNewExam}
+              onAddNewExamWithQuestions={handleAddNewExamWithQuestions}
             />
           ) : (
             <TeacherLoginCard
@@ -238,6 +415,8 @@ export default function App() {
             <span>Fisher-Yates 隨機洗牌</span>
             <span>•</span>
             <span>動態配分公式核算</span>
+            <span>•</span>
+            <span>多試卷題庫下拉管理</span>
             <span>•</span>
             <span>Excel/CSV/JSON 支援</span>
           </div>

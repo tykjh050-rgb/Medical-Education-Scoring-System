@@ -23,8 +23,11 @@ import {
   CheckSquare,
   Square,
   Printer,
+  FileText,
 } from 'lucide-react';
 import { Question, QuestionOption } from '../../types';
+import { resolveScoreAllocation } from '../../utils/scoring';
+import { isEssayQuestion } from '../../utils/answerHelper';
 
 interface ExamContentEditorModalProps {
   isOpen: boolean;
@@ -32,6 +35,11 @@ interface ExamContentEditorModalProps {
   questions: Question[];
   onUpdateQuestions: (newQuestions: Question[]) => void;
   totalScore: number;
+  onUpdateTotalScore?: (score: number) => void;
+  choiceScore?: number;
+  essayScore?: number;
+  onUpdateChoiceScore?: (score: number) => void;
+  onUpdateEssayScore?: (score: number) => void;
   examTitle: string;
   onUpdateExamTitle: (title: string) => void;
   onSwitchToStudentExam?: () => void;
@@ -44,7 +52,7 @@ interface EditQuestionFormState {
   options: { key: string; text: string }[];
   correctAnswer: string;
   explanation: string;
-  type: 'single' | 'multiple';
+  type: 'single' | 'multiple' | 'essay';
 }
 
 const DEFAULT_NEW_QUESTION: EditQuestionFormState = {
@@ -70,6 +78,11 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
   questions,
   onUpdateQuestions,
   totalScore,
+  onUpdateTotalScore,
+  choiceScore,
+  essayScore,
+  onUpdateChoiceScore,
+  onUpdateEssayScore,
   examTitle,
   onUpdateExamTitle,
   onSwitchToStudentExam,
@@ -77,7 +90,7 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
   // 關鍵字搜尋試題
   const [searchTerm, setSearchTerm] = useState('');
   // 篩選題型
-  const [typeFilter, setTypeFilter] = useState<'all' | 'single' | 'multiple'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'single' | 'multiple' | 'essay'>('all');
   
   // 正在編輯中的題目 (若為 null 則代表處於純檢視清單模式)
   const [editingQuestion, setEditingQuestion] = useState<EditQuestionFormState | null>(null);
@@ -105,25 +118,31 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
    */
   const filteredQuestions = useMemo(() => {
     return questions.filter((q) => {
+      const isEssay = isEssayQuestion(q);
       const matchSearch =
         !searchTerm.trim() ||
         q.prompt.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        q.options.some((opt) => opt.text.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (q.options && q.options.some((opt) => opt.text.toLowerCase().includes(searchTerm.toLowerCase()))) ||
         (q.explanation && q.explanation.toLowerCase().includes(searchTerm.toLowerCase())) ||
         String(q.questionNumber).includes(searchTerm.trim());
 
       const matchType =
         typeFilter === 'all' ||
-        (typeFilter === 'multiple' && (q.type === 'multiple' || q.correctAnswer.includes(','))) ||
-        (typeFilter === 'single' && (q.type !== 'multiple' && !q.correctAnswer.includes(',')));
+        (typeFilter === 'essay' && isEssay) ||
+        (typeFilter === 'multiple' && !isEssay && (q.type === 'multiple' || q.correctAnswer.includes(','))) ||
+        (typeFilter === 'single' && !isEssay && (q.type !== 'multiple' && !q.correctAnswer.includes(',')));
 
       return matchSearch && matchType;
     });
   }, [questions, searchTerm, typeFilter]);
 
   /**
-   * 計算每題動態配分
+   * 計算獨立題型動態配分 (選擇題 vs 問答題)
    */
+  const allocation = useMemo(() => {
+    return resolveScoreAllocation(questions, totalScore, choiceScore, essayScore);
+  }, [questions, totalScore, choiceScore, essayScore]);
+
   const perQuestionScore = questions.length > 0 ? (totalScore / questions.length).toFixed(2) : '0';
 
   if (!isOpen) return null;
@@ -151,15 +170,16 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
 
   // 2. 開啟「修改試題」表單
   const handleOpenEditForm = (q: Question) => {
-    const isMulti = q.type === 'multiple' || q.correctAnswer.includes(',');
+    const isEssay = isEssayQuestion(q);
+    const isMulti = !isEssay && (q.type === 'multiple' || q.correctAnswer.includes(','));
     setEditingQuestion({
       id: q.id,
       questionNumber: q.questionNumber,
       prompt: q.prompt,
-      options: q.options.map((opt) => ({ ...opt })),
+      options: (q.options || []).map((opt) => ({ ...opt })),
       correctAnswer: q.correctAnswer,
       explanation: q.explanation || '',
-      type: isMulti ? 'multiple' : 'single',
+      type: isEssay ? 'essay' : isMulti ? 'multiple' : 'single',
     });
     setIsCreatingNew(false);
     setFormError('');
@@ -174,10 +194,59 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
       return;
     }
 
+    // 若為問答題 (答案得完全一致)
+    if (editingQuestion.type === 'essay') {
+      if (!editingQuestion.correctAnswer.trim()) {
+        setFormError('請輸入問答題標準答案（答案得完全一致）！');
+        return;
+      }
+
+      const savedQuestion: Question = {
+        id: editingQuestion.id,
+        questionNumber: editingQuestion.questionNumber,
+        prompt: editingQuestion.prompt.trim(),
+        options: [],
+        correctAnswer: editingQuestion.correctAnswer.trim(),
+        explanation: editingQuestion.explanation.trim(),
+        type: 'essay',
+      };
+
+      let updatedQuestions: Question[] = [];
+
+      if (isCreatingNew) {
+        updatedQuestions = [...questions, savedQuestion].map((q, idx) => ({
+          ...q,
+          questionNumber: idx + 1,
+        }));
+        showToast(`已成功新增第 ${updatedQuestions.length} 題問答題！`);
+      } else {
+        updatedQuestions = questions.map((q) => (q.id === savedQuestion.id ? savedQuestion : q));
+        showToast(`已成功更新第 ${savedQuestion.questionNumber} 題問答題！`);
+      }
+
+      onUpdateQuestions(updatedQuestions);
+
+      if (continueCreating && isCreatingNew) {
+        const nextNum = updatedQuestions.length + 1;
+        setEditingQuestion({
+          ...DEFAULT_NEW_QUESTION,
+          id: 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+          questionNumber: nextNum,
+          type: 'essay',
+          correctAnswer: '',
+        });
+        setFormError('');
+      } else {
+        setEditingQuestion(null);
+        setIsCreatingNew(false);
+      }
+      return;
+    }
+
     // 檢查選項至少 2 個且文字不可全為空
     const validOptions = editingQuestion.options.filter((o) => o.text.trim().length > 0);
     if (validOptions.length < 2) {
-      setFormError('試題至少需提供 2 個有效選項文字！');
+      setFormError('選擇題試題至少需提供 2 個有效選項文字！');
       return;
     }
 
@@ -420,47 +489,97 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
         )}
 
         {/* 頂部 Header */}
-        <div className="p-4 sm:p-6 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex flex-wrap items-center justify-between gap-4 border-b border-indigo-900/40">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold border border-indigo-400/30 flex items-center gap-1.5">
-                <Eye className="w-3.5 h-3.5 text-indigo-300" />
-                教師管理專用功能
-              </span>
-              <span className="text-xs text-slate-400">｜</span>
-              <span className="text-xs text-slate-300">
-                目前試卷題庫共 <strong className="text-white font-mono">{questions.length}</strong> 題
-              </span>
+        <div className="p-4 sm:p-6 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex flex-col gap-3 border-b border-indigo-900/40">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold border border-indigo-400/30 flex items-center gap-1.5">
+                  <Eye className="w-3.5 h-3.5 text-indigo-300" />
+                  教師管理專用功能
+                </span>
+                <span className="text-xs text-slate-400">｜</span>
+                <span className="text-xs text-slate-300">
+                  題庫總計 <strong className="text-white font-mono">{questions.length}</strong> 題（選擇題 {allocation.choiceCount} 題 ｜ 問答題 {allocation.essayCount} 題）
+                </span>
+              </div>
+              <h2 className="text-lg sm:text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                <span>試卷內容檢視與題庫編修</span>
+              </h2>
+              <p className="text-xs text-slate-300 flex items-center gap-2 flex-wrap">
+                <span>單元：</span>
+                <strong className="text-indigo-200">{examTitle}</strong>
+                <span>｜ 試卷總分：</span>
+                <strong className="text-emerald-300 font-mono font-bold">{allocation.totalScore} 分</strong>
+              </p>
             </div>
-            <h2 className="text-lg sm:text-xl font-bold tracking-tight text-white flex items-center gap-2">
-              <span>試卷內容檢視與線上題庫編修</span>
-            </h2>
-            <p className="text-xs text-slate-300 flex items-center gap-2">
-              <span>單元：</span>
-              <strong className="text-indigo-200">{examTitle}</strong>
-              <span>｜ 自訂總分：</span>
-              <strong className="text-indigo-200">{totalScore} 分</strong>
-              <span>｜ 單題配分約：</span>
-              <strong className="text-indigo-200 font-mono">{perQuestionScore} 分/題</strong>
-            </p>
+
+            <div className="flex items-center gap-2">
+              <button
+                id="btn-modal-add-question-top"
+                onClick={handleOpenCreateForm}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm transition"
+              >
+                <Plus className="w-4 h-4" />
+                <span>線上新增題目</span>
+              </button>
+              <button
+                onClick={onClose}
+                className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition"
+                title="關閉檢視視窗"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              id="btn-modal-add-question-top"
-              onClick={handleOpenCreateForm}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm transition"
-            >
-              <Plus className="w-4 h-4" />
-              <span>線上新增題目</span>
-            </button>
-            <button
-              onClick={onClose}
-              className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition"
-              title="關閉檢視視窗"
-            >
-              <X className="w-5 h-5" />
-            </button>
+          {/* 配分欄與選擇題分開顯示列 */}
+          <div className="pt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-white/80">題型獨立配分：</span>
+              <span className="bg-indigo-500/30 text-indigo-100 border border-indigo-400/40 px-2.5 py-1 rounded-lg">
+                選擇題配分：<strong>{allocation.choiceScoreTotal}</strong> 分 ({allocation.choiceCount} 題 · 每題約 {allocation.perChoiceScore} 分)
+              </span>
+              <span className="bg-purple-500/30 text-purple-100 border border-purple-400/40 px-2.5 py-1 rounded-lg">
+                問答題配分：<strong>{allocation.essayScoreTotal}</strong> 分 ({allocation.essayCount} 題 · 每題約 {allocation.perEssayScore} 分)
+              </span>
+              <span className="text-amber-300 text-[11px] font-medium">
+                ※ 問答題答案得完全一致
+              </span>
+            </div>
+
+            {(onUpdateChoiceScore || onUpdateEssayScore) && (
+              <div className="flex items-center gap-2">
+                <span className="text-white/70 text-[11px]">快速微調配分：</span>
+                {onUpdateChoiceScore && (
+                  <div className="flex items-center gap-1 bg-white/10 px-2 py-0.5 rounded-lg border border-white/20">
+                    <span className="text-[11px] text-white/80">選</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={1000}
+                      value={choiceScore ?? allocation.choiceScoreTotal}
+                      onChange={(e) => onUpdateChoiceScore(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                      className="w-12 bg-white/20 text-white font-mono font-bold text-center rounded text-xs py-0.5 focus:outline-none"
+                    />
+                    <span className="text-[11px] text-white/80">分</span>
+                  </div>
+                )}
+                {onUpdateEssayScore && (
+                  <div className="flex items-center gap-1 bg-white/10 px-2 py-0.5 rounded-lg border border-white/20">
+                    <span className="text-[11px] text-white/80">問</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={1000}
+                      value={essayScore ?? allocation.essayScoreTotal}
+                      onChange={(e) => onUpdateEssayScore(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                      className="w-12 bg-white/20 text-white font-mono font-bold text-center rounded text-xs py-0.5 focus:outline-none"
+                    />
+                    <span className="text-[11px] text-white/80">分</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -515,7 +634,7 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
                     <label className="block text-xs font-bold text-slate-700 mb-1">
                       題型規範
                     </label>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-wrap">
                       <label className="inline-flex items-center gap-1.5 text-xs text-slate-800 cursor-pointer">
                         <input
                           type="radio"
@@ -530,7 +649,7 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
                           }
                           className="text-indigo-600 focus:ring-indigo-500"
                         />
-                        <span>單選題 (Single Choice)</span>
+                        <span>單選題 (Single)</span>
                       </label>
                       <label className="inline-flex items-center gap-1.5 text-xs text-slate-800 cursor-pointer">
                         <input
@@ -545,7 +664,23 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
                           }
                           className="text-indigo-600 focus:ring-indigo-500"
                         />
-                        <span>複選題 (Multiple Choice)</span>
+                        <span>複選題 (Multiple)</span>
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 text-xs text-purple-900 font-semibold cursor-pointer">
+                        <input
+                          type="radio"
+                          name="question-type"
+                          checked={editingQuestion.type === 'essay'}
+                          onChange={() =>
+                            setEditingQuestion({
+                              ...editingQuestion,
+                              type: 'essay',
+                              correctAnswer: editingQuestion.correctAnswer || '',
+                            })
+                          }
+                          className="text-purple-600 focus:ring-purple-500"
+                        />
+                        <span>問答題 (Essay · 答案完全一致)</span>
                       </label>
                     </div>
                   </div>
@@ -587,107 +722,136 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
                   />
                 </div>
 
-                {/* 選項清單 (Options) */}
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                      <span>選項群組設定 (options)</span>
-                      <span className="text-rose-500">*</span>
-                      <span className="text-[11px] font-normal text-slate-500">
-                        （點選左側圓鈕或標籤即可指定為正確答案）
+                {/* 問答題標準答案設定區塊 (答案得完全一致) */}
+                {editingQuestion.type === 'essay' ? (
+                  <div className="p-4 bg-purple-50/80 border border-purple-200 rounded-2xl space-y-2.5">
+                    <label className="block text-xs font-bold text-purple-950 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <FileText className="w-4 h-4 text-purple-700" />
+                        <span>問答題標準答案 (Standard Answer)</span>
+                        <span className="text-rose-500">*</span>
+                      </span>
+                      <span className="text-[11px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md border border-purple-300">
+                        答案得完全一致
                       </span>
                     </label>
-
-                    {editingQuestion.options.length < OPTION_KEYS.length && (
-                      <button
-                        type="button"
-                        onClick={handleAddOptionField}
-                        className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-semibold"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        增加選項 (如 {OPTION_KEYS[editingQuestion.options.length]})
-                      </button>
-                    )}
+                    <textarea
+                      id="input-essay-correct-answer"
+                      rows={2}
+                      value={editingQuestion.correctAnswer}
+                      onChange={(e) =>
+                        setEditingQuestion({ ...editingQuestion, correctAnswer: e.target.value })
+                      }
+                      placeholder="請輸入標準答案文字（學生作答必須與此處內容完全一致方可得分）..."
+                      className="w-full p-3 text-sm border border-purple-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white font-medium text-purple-950"
+                    />
+                    <p className="text-[11px] text-purple-800 leading-relaxed">
+                      ※ 評改規則：問答題不設選項，系統在學生測驗繳卷時進行字串精確比對（去除首尾空白後完全相同方可獲配分）。
+                    </p>
                   </div>
+                ) : (
+                  /* 選項清單 (Options) */
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                        <span>選項群組設定 (options)</span>
+                        <span className="text-rose-500">*</span>
+                        <span className="text-[11px] font-normal text-slate-500">
+                          （點選左側圓鈕或標籤即可指定為正確答案）
+                        </span>
+                      </label>
 
-                  <div className="space-y-2">
-                    {editingQuestion.options.map((opt, idx) => {
-                      const isCorrect =
-                        editingQuestion.type === 'multiple'
-                          ? editingQuestion.correctAnswer
-                              .split(',')
-                              .map((k) => k.trim().toUpperCase())
-                              .includes(opt.key.toUpperCase())
-                          : editingQuestion.correctAnswer.toUpperCase() === opt.key.toUpperCase();
-
-                      return (
-                        <div
-                          key={opt.key}
-                          className={`flex items-center gap-2 p-2 rounded-2xl border transition-all ${
-                            isCorrect
-                              ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950'
-                              : 'bg-white border-slate-200 text-slate-800'
-                          }`}
+                      {editingQuestion.options.length < OPTION_KEYS.length && (
+                        <button
+                          type="button"
+                          onClick={handleAddOptionField}
+                          className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-semibold"
                         >
-                          {/* 正解指定按鈕 */}
-                          <button
-                            type="button"
-                            onClick={() => handleToggleOptionCorrect(opt.key)}
-                            className={`w-7 h-7 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 cursor-pointer transition ${
-                              isCorrect
-                                ? 'bg-emerald-600 text-white shadow-xs'
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                            }`}
-                            title="點擊設定為正確答案"
-                          >
-                            {opt.key}
-                          </button>
+                          <Plus className="w-3.5 h-3.5" />
+                          增加選項 (如 {OPTION_KEYS[editingQuestion.options.length]})
+                        </button>
+                      )}
+                    </div>
 
-                          {/* 選項文字輸入 */}
-                          <input
-                            type="text"
-                            value={opt.text}
-                            onChange={(e) => handleOptionTextChange(idx, e.target.value)}
-                            placeholder={`選項 ${opt.key} 敘述內容...`}
-                            className="flex-1 px-3 py-1.5 text-xs sm:text-sm bg-transparent border-0 focus:outline-none focus:ring-0 placeholder:text-slate-400"
-                          />
+                    <div className="space-y-2">
+                      {editingQuestion.options.map((opt, idx) => {
+                        const isCorrect =
+                          editingQuestion.type === 'multiple'
+                            ? editingQuestion.correctAnswer
+                                .split(',')
+                                .map((k) => k.trim().toUpperCase())
+                                .includes(opt.key.toUpperCase())
+                            : editingQuestion.correctAnswer.toUpperCase() === opt.key.toUpperCase();
 
-                          {/* 標記狀態指示 */}
-                          <button
-                            type="button"
-                            onClick={() => handleToggleOptionCorrect(opt.key)}
-                            className={`px-2.5 py-1 text-[11px] font-bold rounded-lg shrink-0 transition flex items-center gap-1 cursor-pointer ${
+                        return (
+                          <div
+                            key={opt.key}
+                            className={`flex items-center gap-2 p-2 rounded-2xl border transition-all ${
                               isCorrect
-                                ? 'bg-emerald-600 text-white'
-                                : 'bg-slate-100 text-slate-500 hover:text-slate-700'
+                                ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950'
+                                : 'bg-white border-slate-200 text-slate-800'
                             }`}
                           >
-                            {isCorrect ? (
-                              <>
-                                <Check className="w-3 h-3" />
-                                <span>標準正解</span>
-                              </>
-                            ) : (
-                              <span>設為正解</span>
-                            )}
-                          </button>
-
-                          {/* 刪除選項 (至少保留 2 個) */}
-                          {editingQuestion.options.length > 2 && (
+                            {/* 正解指定按鈕 */}
                             <button
                               type="button"
-                              onClick={() => handleRemoveOptionField(idx)}
-                              className="w-7 h-7 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition shrink-0"
-                              title="移除此選項"
+                              onClick={() => handleToggleOptionCorrect(opt.key)}
+                              className={`w-7 h-7 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 cursor-pointer transition ${
+                                isCorrect
+                                  ? 'bg-emerald-600 text-white shadow-xs'
+                                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                              }`}
+                              title="點擊設定為正確答案"
                             >
-                              <X className="w-4 h-4" />
+                              {opt.key}
                             </button>
-                          )}
-                        </div>
-                      );
-                    })}
+
+                            {/* 選項文字輸入 */}
+                            <input
+                              type="text"
+                              value={opt.text}
+                              onChange={(e) => handleOptionTextChange(idx, e.target.value)}
+                              placeholder={`選項 ${opt.key} 敘述內容...`}
+                              className="flex-1 px-3 py-1.5 text-xs sm:text-sm bg-transparent border-0 focus:outline-none focus:ring-0 placeholder:text-slate-400"
+                            />
+
+                            {/* 標記狀態指示 */}
+                            <button
+                              type="button"
+                              onClick={() => handleToggleOptionCorrect(opt.key)}
+                              className={`px-2.5 py-1 text-[11px] font-bold rounded-lg shrink-0 transition flex items-center gap-1 cursor-pointer ${
+                                isCorrect
+                                  ? 'bg-emerald-600 text-white'
+                                  : 'bg-slate-100 text-slate-500 hover:text-slate-700'
+                              }`}
+                            >
+                              {isCorrect ? (
+                                <>
+                                  <Check className="w-3 h-3" />
+                                  <span>標準正解</span>
+                                </>
+                              ) : (
+                                <span>設為正解</span>
+                              )}
+                            </button>
+
+                            {/* 刪除選項 (至少保留 2 個) */}
+                            {editingQuestion.options.length > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveOptionField(idx)}
+                                className="w-7 h-7 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition shrink-0"
+                                title="移除此選項"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* 題目解析 */}
                 <div>
@@ -772,7 +936,7 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
                   </div>
 
                   {/* 題型切換 */}
-                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs">
+                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs flex-wrap">
                     <button
                       onClick={() => setTypeFilter('all')}
                       className={`px-2.5 py-1 rounded-lg font-medium transition ${
@@ -800,6 +964,16 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
                       }`}
                     >
                       複選題
+                    </button>
+                    <button
+                      onClick={() => setTypeFilter('essay')}
+                      className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                        typeFilter === 'essay'
+                          ? 'bg-purple-600 text-white shadow-xs font-bold'
+                          : 'text-purple-700 hover:bg-purple-50'
+                      }`}
+                    >
+                      問答題 ({allocation.essayCount})
                     </button>
                   </div>
                 </div>
@@ -857,8 +1031,9 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {filteredQuestions.map((q, idx) => {
-                    const isMulti = q.type === 'multiple' || q.correctAnswer.includes(',');
+                  {filteredQuestions.map((q) => {
+                    const isEssay = isEssayQuestion(q);
+                    const isMulti = !isEssay && (q.type === 'multiple' || q.correctAnswer.includes(','));
                     const isSelected = selectedIds.includes(q.id);
 
                     return (
@@ -898,16 +1073,18 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
                               </span>
                               <span
                                 className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
-                                  isMulti
-                                    ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                                  isEssay
+                                    ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                                    : isMulti
+                                    ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
                                     : 'bg-slate-100 text-slate-600'
                                 }`}
                               >
-                                {isMulti ? '複選' : '單選'}
+                                {isEssay ? '問答' : isMulti ? '複選' : '單選'}
                               </span>
                             </div>
 
-                            {/* 題目本體與選項 */}
+                            {/* 題目本體與選項/標準答案 */}
                             <div className="space-y-3 flex-1">
                               <div>
                                 <p className="text-sm font-semibold text-slate-900 leading-relaxed">
@@ -915,44 +1092,61 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
                                 </p>
                               </div>
 
-                              {/* 選項列表 */}
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                {q.options.map((opt) => {
-                                  const isCorrect =
-                                    showAnswerKey &&
-                                    (isMulti
-                                      ? q.correctAnswer
-                                          .split(',')
-                                          .map((k) => k.trim().toUpperCase())
-                                          .includes(opt.key.toUpperCase())
-                                      : q.correctAnswer.toUpperCase() === opt.key.toUpperCase());
+                              {/* 問答題標準答案 或 選擇題選項清單 */}
+                              {isEssay ? (
+                                <div className="p-3 bg-purple-50/80 border border-purple-200 rounded-xl text-xs space-y-1.5">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-bold text-purple-950 flex items-center gap-1">
+                                      <FileText className="w-3.5 h-3.5 text-purple-700" />
+                                      問答題標準答案（作答須完全一致）：
+                                    </span>
+                                    <span className="text-[10px] bg-purple-200 text-purple-900 font-bold px-2 py-0.5 rounded border border-purple-300">
+                                      答案得完全一致
+                                    </span>
+                                  </div>
+                                  <p className="font-mono text-purple-950 font-medium bg-white p-2.5 rounded-lg border border-purple-200 break-all shadow-xs">
+                                    {q.correctAnswer}
+                                  </p>
+                                </div>
+                              ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  {(q.options || []).map((opt) => {
+                                    const isCorrect =
+                                      showAnswerKey &&
+                                      (isMulti
+                                        ? q.correctAnswer
+                                            .split(',')
+                                            .map((k) => k.trim().toUpperCase())
+                                            .includes(opt.key.toUpperCase())
+                                        : q.correctAnswer.toUpperCase() === opt.key.toUpperCase());
 
-                                  return (
-                                    <div
-                                      key={opt.key}
-                                      className={`p-2 rounded-xl text-xs border flex items-center gap-2 transition ${
-                                        isCorrect
-                                          ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950 font-medium'
-                                          : 'bg-slate-50/80 border-slate-200 text-slate-700'
-                                      }`}
-                                    >
-                                      <span
-                                        className={`w-5 h-5 rounded flex items-center justify-center font-bold text-[11px] shrink-0 ${
+                                    return (
+                                      <div
+                                        key={opt.key}
+                                        className={`p-2 rounded-xl text-xs border flex items-center gap-2 transition ${
                                           isCorrect
-                                            ? 'bg-emerald-600 text-white'
-                                            : 'bg-slate-200 text-slate-600'
+                                            ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950 font-medium'
+                                            : 'bg-slate-50/80 border-slate-200 text-slate-700'
                                         }`}
                                       >
-                                        {opt.key}
-                                      </span>
-                                      <span className="truncate">{opt.text}</span>
-                                      {isCorrect && (
-                                        <Check className="w-3.5 h-3.5 text-emerald-600 ml-auto shrink-0" />
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
+                                        <span
+                                          className={`w-5 h-5 rounded flex items-center justify-center font-bold text-[11px] shrink-0 ${
+                                            isCorrect
+                                              ? 'bg-emerald-600 text-white'
+                                              : 'bg-slate-200 text-slate-600'
+                                          }`}
+                                        >
+                                          {opt.key}
+                                        </span>
+                                        <span className="truncate">{opt.text}</span>
+                                        {isCorrect && (
+                                          <Check className="w-3.5 h-3.5 text-emerald-600 ml-auto shrink-0" />
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
 
                               {/* 解析 */}
                               {q.explanation && (
@@ -967,7 +1161,10 @@ export const ExamContentEditorModal: React.FC<ExamContentEditorModalProps> = ({
                           {/* 右側操作按鈕組 (修改、刪除、上移、下移、複製) */}
                           <div className="shrink-0 flex flex-col items-end gap-2 pl-2">
                             {/* 正確答案標記 */}
-                            <span className="text-xs font-bold font-mono px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-300">
+                            <span
+                              className="text-xs font-bold font-mono px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-300 max-w-[200px] truncate"
+                              title={q.correctAnswer}
+                            >
                               正解: {q.correctAnswer}
                             </span>
 

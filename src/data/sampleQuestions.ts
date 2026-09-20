@@ -81,4 +81,22 @@ export const DEFAULT_SAMPLE_QUESTIONS: Question[] = [
     explanation: 'PostgreSQL 與 MySQL 為標準的 SQL 關聯式資料庫管理系統；MongoDB 屬於 NoSQL 文件型資料庫，Redis 屬於 In-Memory Key-Value 快取/資料庫。',
     type: 'multiple',
   },
+  {
+    id: 'q-07',
+    questionNumber: 7,
+    prompt: '【問答題】請寫出在計算機網路中，將主機網域名稱（例如 google.com）解析轉換為對應 IP 位址的網際網路協定名稱英文簡稱（3 個英文字母大寫）。',
+    options: [],
+    correctAnswer: 'DNS',
+    explanation: '網域名稱系統（Domain Name System，簡稱 DNS）負責將人類可讀的主機名稱解析對應至網路通訊之 IP 位址。',
+    type: 'essay',
+  },
+  {
+    id: 'q-08',
+    questionNumber: 8,
+    prompt: '【問答題】在植物生理學中，綠色植物進行光合作用以吸收光能的最主要色素分子名稱為何？',
+    options: [],
+    correctAnswer: '葉綠素',
+    explanation: '葉綠素（Chlorophyll）是植物體內吸收可見光能（主要為藍紫光與紅光）最核心的天然色素化合物。',
+    type: 'essay',
+  },
 ];

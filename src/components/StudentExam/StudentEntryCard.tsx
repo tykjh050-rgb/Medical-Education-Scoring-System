@@ -13,29 +13,44 @@ import {
   Timer,
   Info,
 } from 'lucide-react';
-import { Question, StudentExamRecord } from '../../types';
+import { Question, StudentExamRecord, ExamPaper } from '../../types';
 import { checkExamAttemptLimit } from '../../utils/examLimiter';
+import { resolveScoreAllocation } from '../../utils/scoring';
 
 interface StudentEntryCardProps {
   examTitle: string;
   questions: Question[];
   totalScore: number;
+  choiceScore?: number;
+  essayScore?: number;
   records: StudentExamRecord[];
   onStartExam: (studentName: string, studentId: string) => void;
   onOpenTeacherDashboard: () => void;
+  examPapers?: ExamPaper[];
+  activeExamId?: string;
+  onSelectExam?: (id: string) => void;
 }
 
 export const StudentEntryCard: React.FC<StudentEntryCardProps> = ({
   examTitle,
   questions,
   totalScore,
+  choiceScore,
+  essayScore,
   records,
   onStartExam,
   onOpenTeacherDashboard,
+  examPapers,
+  activeExamId,
+  onSelectExam,
 }) => {
   const [studentName, setStudentName] = useState('王小明');
   const [studentId, setStudentId] = useState('S112105');
   const [errorMsg, setErrorMsg] = useState('');
+
+  const allocation = useMemo(() => {
+    return resolveScoreAllocation(questions, totalScore, choiceScore, essayScore);
+  }, [questions, totalScore, choiceScore, essayScore]);
 
   // 即時計算同 1 位學生同 1 份測驗在 12 小時內的測驗限制狀態
   const limitStatus = useMemo(() => {
@@ -57,7 +72,7 @@ export const StudentEntryCard: React.FC<StudentEntryCardProps> = ({
       return;
     }
 
-    // 核心規則防護：同 1 位學生同 1 份測驗題目 12 小時內最多只能重複測驗 2 次
+    // 核心規則防護：同 1 位學生同 1 份測驗題目 12 小時內最多只能測驗 1 次
     if (!limitStatus.canAttempt) {
       setErrorMsg(
         `【作答上限防護】${limitStatus.message}`
@@ -79,28 +94,50 @@ export const StudentEntryCard: React.FC<StudentEntryCardProps> = ({
             線上隨機評量系統
           </div>
           <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
-            {examTitle || '線上學科綜合能力測驗'}
+            {examTitle || '疾病分類測驗'}
           </h2>
           <p className="text-xs sm:text-sm text-slate-300 mt-2">
             請輸入個人應試資訊以開始測驗。進入試卷後，題目將採用 Fisher-Yates 隨機不重複洗牌排列。
           </p>
         </div>
 
-        {/* Exam Specifications */}
-        <div className="grid grid-cols-3 divide-x divide-slate-100 bg-slate-50 border-b border-slate-100 py-3 text-center text-xs">
-          <div>
-            <span className="text-slate-400 block mb-0.5">試卷題數</span>
-            <strong className="text-slate-800 text-sm font-bold">{questions.length} 題</strong>
+        {/* Exam Specifications (選擇題與問答題分開配分規格) */}
+        <div className="bg-slate-50 border-b border-slate-100 divide-y divide-slate-100 text-xs">
+          <div className="grid grid-cols-3 divide-x divide-slate-100 py-3 text-center">
+            <div>
+              <span className="text-slate-400 block mb-0.5">試卷總題數</span>
+              <strong className="text-slate-800 text-sm font-bold">{questions.length} 題</strong>
+            </div>
+            <div>
+              <span className="text-slate-400 block mb-0.5">試卷滿分</span>
+              <strong className="text-emerald-700 text-sm font-bold">{allocation.totalScore} 分</strong>
+            </div>
+            <div>
+              <span className="text-slate-400 block mb-0.5">題型組合</span>
+              <strong className="text-indigo-700 text-xs font-bold block mt-0.5">
+                選擇 {allocation.choiceCount} 題 ＋ 問答 {allocation.essayCount} 題
+              </strong>
+            </div>
           </div>
-          <div>
-            <span className="text-slate-400 block mb-0.5">總分設定</span>
-            <strong className="text-emerald-700 text-sm font-bold">{totalScore} 分</strong>
-          </div>
-          <div>
-            <span className="text-slate-400 block mb-0.5">單題配分</span>
-            <strong className="text-indigo-700 text-sm font-bold">
-              {questions.length > 0 ? (totalScore / questions.length).toFixed(2) : 0} 分
-            </strong>
+
+          {/* 分開配分欄詳情 */}
+          <div className="px-4 py-2 bg-indigo-50/40 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-indigo-900">配分欄說明：</span>
+              <span className="bg-white px-2 py-0.5 rounded border border-indigo-100 text-indigo-700 font-medium">
+                選擇題共 {allocation.choiceTotalScore} 分（均分 {allocation.perChoiceScore} 分/題）
+              </span>
+              {allocation.essayCount > 0 && (
+                <span className="bg-white px-2 py-0.5 rounded border border-purple-100 text-purple-700 font-medium">
+                  問答題共 {allocation.essayTotalScore} 分（均分 {allocation.perEssayScore} 分/題）
+                </span>
+              )}
+            </div>
+            {allocation.essayCount > 0 && (
+              <span className="text-amber-700 font-semibold">
+                ※ 問答題評改標準：答案得完全一致
+              </span>
+            )}
           </div>
         </div>
 
@@ -114,6 +151,29 @@ export const StudentEntryCard: React.FC<StudentEntryCardProps> = ({
           )}
 
           <div className="space-y-4">
+            {examPapers && examPapers.length > 1 && onSelectExam && (
+              <div>
+                <label htmlFor="student-exam-select" className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  選擇應試試卷題庫 <span className="text-indigo-600">({examPapers.length} 份可用試卷)</span>
+                </label>
+                <div className="relative">
+                  <BookOpen className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <select
+                    id="student-exam-select"
+                    value={activeExamId}
+                    onChange={(e) => onSelectExam(e.target.value)}
+                    className="w-full pl-9 pr-8 py-2.5 text-sm font-semibold text-slate-800 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50/50"
+                  >
+                    {examPapers.map((paper) => (
+                      <option key={paper.id} value={paper.id}>
+                        {paper.title}（{paper.questions.length} 題 • 滿分 {paper.totalScore} 分）
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
             <div>
               <label htmlFor="student-name-input" className="block text-xs font-semibold text-slate-700 mb-1.5">
                 學生姓名 <span className="text-rose-500">*</span>
@@ -150,14 +210,12 @@ export const StudentEntryCard: React.FC<StudentEntryCardProps> = ({
               </div>
             </div>
 
-            {/* 12 小時重複測驗限制狀態指示卡 (12-hour limit status indicator) */}
+            {/* 12 小時測驗限制狀態指示卡 (12-hour limit status indicator) */}
             <div
               id="exam-attempt-limit-card"
               className={`p-4 rounded-2xl border transition-all text-xs space-y-2.5 ${
                 !limitStatus.canAttempt
                   ? 'bg-rose-50/90 border-rose-300 text-rose-950 shadow-xs'
-                  : limitStatus.attemptsInWindow === 1
-                  ? 'bg-amber-50/90 border-amber-300 text-amber-950 shadow-xs'
                   : 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
               }`}
             >
@@ -165,8 +223,6 @@ export const StudentEntryCard: React.FC<StudentEntryCardProps> = ({
                 <div className="flex items-center gap-2 font-bold text-xs sm:text-sm">
                   {!limitStatus.canAttempt ? (
                     <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0" />
-                  ) : limitStatus.attemptsInWindow === 1 ? (
-                    <History className="w-4 h-4 text-amber-600 shrink-0" />
                   ) : (
                     <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
                   )}
@@ -179,8 +235,6 @@ export const StudentEntryCard: React.FC<StudentEntryCardProps> = ({
                     className={`font-mono font-bold px-2.5 py-0.5 rounded-full text-xs ${
                       !limitStatus.canAttempt
                         ? 'bg-rose-600 text-white'
-                        : limitStatus.attemptsInWindow === 1
-                        ? 'bg-amber-600 text-white'
                         : 'bg-emerald-600 text-white'
                     }`}
                   >
@@ -196,10 +250,10 @@ export const StudentEntryCard: React.FC<StudentEntryCardProps> = ({
               {!limitStatus.canAttempt ? (
                 <div className="space-y-2 pt-1 border-t border-rose-200 text-rose-900 leading-relaxed">
                   <p className="font-semibold text-rose-700">
-                    ⚠️ 此學號 ({studentId}) 於 12 小時內已重複測驗滿 2 次，已達系統作答上限！
+                    ⚠️ 此學號 ({studentId}) 於 12 小時內已完成測驗，已達系統作答上限（1 次）！
                   </p>
                   <p className="text-[11px] text-rose-800">
-                    依規定暫時無法再次進入測驗。最早一次測驗於 12 小時後解禁，預計開放作答時間為：
+                    依規定暫時無法重複進入測驗。本次測驗於 12 小時後解禁，預計開放作答時間為：
                     <strong className="font-mono text-rose-950 ml-1">
                       {limitStatus.formattedNextAllowedTime}
                     </strong>
@@ -220,20 +274,10 @@ export const StudentEntryCard: React.FC<StudentEntryCardProps> = ({
                     ※ 如有重考特殊需求，請洽任課教師於後台管理區調整或清空作答總表。
                   </p>
                 </div>
-              ) : limitStatus.attemptsInWindow === 1 ? (
-                <div className="text-[11px] text-amber-900 leading-relaxed pt-1 border-t border-amber-200">
-                  <span>
-                    您於 12 小時內已測驗過 1 次，本次將是您於此 12 小時週期內的
-                    <strong className="font-bold text-amber-800 underline underline-offset-2 mx-1">
-                      最後 1 次測驗機會
-                    </strong>
-                    ，提交後將鎖定 12 小時！請把握作答時間。
-                  </span>
-                </div>
               ) : (
                 <div className="text-[11px] text-emerald-800 leading-relaxed pt-1 border-t border-emerald-200">
                   <span>
-                    同 1 位學生同 1 份測驗題目在 12 小時內最多可重複測驗 2 次。您目前尚餘 <strong>2 次</strong> 機會。
+                    同 1 位學生同 1 份測驗題目在 12 小時內最多可測驗 1 次。您目前尚餘 <strong>1 次</strong> 機會（交卷後鎖定 12 小時）。
                   </span>
                 </div>
               )}
@@ -249,7 +293,7 @@ export const StudentEntryCard: React.FC<StudentEntryCardProps> = ({
             <ul className="list-disc list-inside space-y-1 text-[11px] text-amber-800/90 leading-relaxed">
               <li>
                 <strong>次數限制規則：</strong>
-                同 1 位學生同 1 份測驗題目，<strong>12 小時內最多只能重複測驗 2 次</strong>（依學號與試卷自動鎖定）。
+                同 1 位學生同 1 份測驗題目，<strong>12 小時內最多只能測驗 1 次</strong>（依學號與試卷自動鎖定）。
               </li>
               <li>
                 <strong>隨機不重複出題：</strong>
@@ -285,12 +329,7 @@ export const StudentEntryCard: React.FC<StudentEntryCardProps> = ({
               {!limitStatus.canAttempt ? (
                 <>
                   <ShieldAlert className="w-4 h-4 text-slate-400" />
-                  <span>已達 12 小時測驗上限 (2/2次)</span>
-                </>
-              ) : limitStatus.attemptsInWindow === 1 ? (
-                <>
-                  <span>進入隨機排列並開始作答 (剩餘最後 1 次機會)</span>
-                  <ArrowRight className="w-4 h-4" />
+                  <span>已達 12 小時測驗上限 (1/1次)</span>
                 </>
               ) : (
                 <>

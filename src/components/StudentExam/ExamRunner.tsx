@@ -14,9 +14,10 @@ import {
   CircleDot,
 } from 'lucide-react';
 import { Question, StudentPerQuestionResult, StudentExamRecord } from '../../types';
-import { calculateExamScore } from '../../utils/scoring';
+import { calculateExamScore, resolveScoreAllocation, calculateDetailedExamScore } from '../../utils/scoring';
 import {
   isMultipleChoiceQuestion,
+  isEssayQuestion,
   normalizeAnswerString,
   isAnswerCorrect,
   formatAnswerDisplay,
@@ -27,6 +28,8 @@ interface ExamRunnerProps {
   studentId: string;
   examTitle: string;
   totalScore: number;
+  choiceScore?: number;
+  essayScore?: number;
   shuffledQuestions: Question[];
   onFinishExam: (record: StudentExamRecord) => void;
   onExit: () => void;
@@ -37,6 +40,8 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   studentId,
   examTitle,
   totalScore,
+  choiceScore,
+  essayScore,
   shuffledQuestions,
   onFinishExam,
   onExit,
@@ -46,11 +51,14 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   // 當前題目索引 (一次顯示一題模式使用，0-indexed)
   const [currentIndex, setCurrentIndex] = useState(0);
 
-  // 學生選擇答案：key 為 questionId，value 為格式化選項字串（單選為 "A"，複選為 "A,C"）
+  // 學生選擇答案：key 為 questionId，value 為格式化選項字串（單選為 "A"，複選為 "A,C"，問答題為輸入文字）
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
+
+  // 計算選擇題與問答題分開配分規格
+  const allocation = resolveScoreAllocation(shuffledQuestions, totalScore, choiceScore, essayScore);
 
   // 計時器
   useEffect(() => {
@@ -67,6 +75,19 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
   // 當前題目
   const currentQuestion = shuffledQuestions[currentIndex] || shuffledQuestions[0];
+
+  /**
+   * 處理問答題文字輸入
+   */
+  const handleEssayChange = (questionId: string, val: string) => {
+    setAnswers((prev) => ({
+      ...prev,
+      [questionId]: val,
+    }));
+    if (validationError) {
+      setValidationError(null);
+    }
+  };
 
   /**
    * 處理選項點擊：支援單選與複選
@@ -151,32 +172,37 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     let correctCount = 0;
     const detailedResults: StudentPerQuestionResult[] = shuffledQuestions.map((q) => {
       const selected = answers[q.id] || '';
-      const isCorrect = isAnswerCorrect(selected, q.correctAnswer);
+      const isEssay = isEssayQuestion(q);
+      const isMultiple = isMultipleChoiceQuestion(q);
+      const questionType = isEssay ? 'essay' : isMultiple ? 'multiple' : 'single';
+
+      // 依題意：問答題答案得完全一致；選擇題精確比對選項代號
+      const isCorrect = isAnswerCorrect(selected, q.correctAnswer, questionType);
       if (isCorrect) {
         correctCount += 1;
       }
 
-      const isMultiple = isMultipleChoiceQuestion(q);
-      const perQuestionScore = totalQuestions > 0 ? totalScore / totalQuestions : 0;
-      const earnedScore = isCorrect ? Math.round((totalScore / totalQuestions) * 10) / 10 : 0;
+      const maxQuestionScore = isEssay ? allocation.perEssayScore : allocation.perChoiceScore;
+      const earnedScore = isCorrect ? maxQuestionScore : 0;
 
       return {
         questionId: q.id,
         originalQuestionNumber: q.questionNumber,
         prompt: q.prompt,
-        options: q.options,
+        options: q.options || [],
         selectedOption: selected,
         correctAnswer: q.correctAnswer,
         isCorrect,
         earnedScore,
-        maxQuestionScore: Math.round(perQuestionScore * 10) / 10,
+        maxQuestionScore,
         explanation: q.explanation,
         isMultiple,
+        type: questionType,
       };
     });
 
-    // 套用核心配分公式：學生總分 = Math.round((答對題數 / 題目總數) * 老師自訂總分)
-    const scoreResult = calculateExamScore(correctCount, totalQuestions, totalScore);
+    // 依選擇題與問答題分開計算配分與得分
+    const detailedScore = calculateDetailedExamScore(detailedResults, allocation);
 
     const record: StudentExamRecord = {
       id: `record-${Date.now()}`,
@@ -187,8 +213,16 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
       durationSeconds: elapsedSeconds,
       totalQuestions,
       correctCount,
-      finalScore: scoreResult.finalScore,
-      configuredTotalScore: totalScore,
+      finalScore: detailedScore.finalScore,
+      configuredTotalScore: allocation.totalScore,
+      choiceScoreEarned: detailedScore.choiceEarnedScore,
+      choiceScoreTotal: detailedScore.choiceTotalScore,
+      essayScoreEarned: detailedScore.essayEarnedScore,
+      essayScoreTotal: detailedScore.essayTotalScore,
+      choiceCount: detailedScore.choiceCount,
+      essayCount: detailedScore.essayCount,
+      choiceCorrectCount: detailedScore.choiceCorrectCount,
+      essayCorrectCount: detailedScore.essayCorrectCount,
       detailedResults,
     };
 
@@ -205,12 +239,15 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
    * 渲染單一題目內容
    */
   const renderQuestionCard = (q: Question, displayIndex: number) => {
-    const isMultiple = isMultipleChoiceQuestion(q);
+    const isEssay = isEssayQuestion(q);
+    const isMultiple = !isEssay && isMultipleChoiceQuestion(q);
     const selectedAnswerStr = answers[q.id] || '';
     const selectedKeys = selectedAnswerStr
       ? selectedAnswerStr.split(',').map((s) => s.trim())
       : [];
-    const isAnswered = selectedKeys.length > 0;
+    const isAnswered = isEssay
+      ? selectedAnswerStr.trim().length > 0
+      : selectedKeys.length > 0;
     const isMissing = attemptedSubmit && !isAnswered;
 
     return (
@@ -221,7 +258,9 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
           isMissing
             ? 'border-rose-400 ring-4 ring-rose-100'
             : isAnswered
-            ? 'border-indigo-200 shadow-indigo-50/50'
+            ? isEssay
+              ? 'border-purple-200 shadow-purple-50/50'
+              : 'border-indigo-200 shadow-indigo-50/50'
             : 'border-slate-200'
         }`}
       >
@@ -231,7 +270,9 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
             <span
               className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm shrink-0 ${
                 isAnswered
-                  ? 'bg-indigo-600 text-white'
+                  ? isEssay
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-indigo-600 text-white'
                   : isMissing
                   ? 'bg-rose-100 text-rose-700 border border-rose-300'
                   : 'bg-slate-100 text-slate-700'
@@ -243,12 +284,14 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
             <div className="flex items-center gap-2">
               <span
                 className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-                  isMultiple
+                  isEssay
+                    ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                    : isMultiple
                     ? 'bg-amber-100 text-amber-900 border border-amber-300'
                     : 'bg-blue-100 text-blue-900 border border-blue-200'
                 }`}
               >
-                {isMultiple ? '【複選題】' : '【單選題】'}
+                {isEssay ? '【問答題】' : isMultiple ? '【複選題】' : '【單選題】'}
               </span>
               <span className="text-[11px] text-slate-400 font-mono">
                 題庫編號 #{q.questionNumber}
@@ -257,8 +300,12 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
           </div>
 
           <div className="text-right shrink-0">
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600">
-              單題均分 {(totalScore / (totalQuestions || 1)).toFixed(1)} 分
+            <span className={`text-xs font-semibold px-2.5 py-1 rounded-lg ${
+              isEssay ? 'bg-purple-50 text-purple-700 border border-purple-200' : 'bg-slate-100 text-slate-600'
+            }`}>
+              {isEssay
+                ? `問答題配分 ${allocation.perEssayScore} 分`
+                : `選擇題配分 ${allocation.perChoiceScore} 分`}
             </span>
           </div>
         </div>
@@ -268,60 +315,81 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
           <h3 className="text-base sm:text-lg font-bold text-slate-900 leading-relaxed">
             {q.prompt}
           </h3>
-          {isMultiple && (
+          {isEssay ? (
+            <p className="text-xs text-purple-700 mt-1.5 font-medium">
+              ※ 本題為問答題，請在下方輸入完整文字答案（評改規則：答案得完全一致）。
+            </p>
+          ) : isMultiple ? (
             <p className="text-xs text-amber-700 mt-1 font-medium">
               ※ 本題為複選題，可同時勾選多個符合條件的選項。
             </p>
-          )}
+          ) : null}
         </div>
 
-        {/* 選項列表：提供單選 (Radio) 或 複選 (Checkbox) 按鈕 */}
-        <div className="space-y-3">
-          {q.options.map((opt) => {
-            const isSelected = selectedKeys.includes(opt.key);
+        {/* 作答區域：問答題 (Textarea) 或 選擇題 (選項列表) */}
+        {isEssay ? (
+          <div className="space-y-2">
+            <textarea
+              id={`essay-input-${q.id}`}
+              rows={4}
+              value={selectedAnswerStr}
+              onChange={(e) => handleEssayChange(q.id, e.target.value)}
+              placeholder="請在此輸入問答題完整文字答案..."
+              className="w-full p-4 text-sm sm:text-base border border-slate-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-500 bg-purple-50/20 text-slate-900 font-medium placeholder:text-slate-400 leading-relaxed transition"
+            />
+            <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+              <span>已輸入 {selectedAnswerStr.trim().length} 字</span>
+              <span className="text-purple-700 font-medium">評改標準：答案得完全一致</span>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {q.options.map((opt) => {
+              const isSelected = selectedKeys.includes(opt.key);
 
-            return (
-              <label
-                key={opt.key}
-                id={`opt-${q.id}-${opt.key}`}
-                onClick={() => handleSelectOption(q, opt.key)}
-                className={`flex items-start sm:items-center gap-3.5 p-4 rounded-2xl border cursor-pointer transition-all ${
-                  isSelected
-                    ? isMultiple
-                      ? 'border-amber-500 bg-amber-50/70 text-amber-950 font-medium shadow-xs'
-                      : 'border-indigo-600 bg-indigo-50/70 text-indigo-950 font-medium shadow-xs'
-                    : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50/70 text-slate-800'
-                }`}
-              >
-                {/* 選取指示圖示 */}
-                <span
-                  className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 transition-colors mt-0.5 sm:mt-0 ${
+              return (
+                <label
+                  key={opt.key}
+                  id={`opt-${q.id}-${opt.key}`}
+                  onClick={() => handleSelectOption(q, opt.key)}
+                  className={`flex items-start sm:items-center gap-3.5 p-4 rounded-2xl border cursor-pointer transition-all ${
                     isSelected
                       ? isMultiple
-                        ? 'border border-amber-600 bg-amber-600 text-white'
-                        : 'border border-indigo-600 bg-indigo-600 text-white rounded-full'
-                      : isMultiple
-                      ? 'border border-slate-300 bg-white text-slate-600'
-                      : 'border border-slate-300 bg-white text-slate-600 rounded-full'
+                        ? 'border-amber-500 bg-amber-50/70 text-amber-950 font-medium shadow-xs'
+                        : 'border-indigo-600 bg-indigo-50/70 text-indigo-950 font-medium shadow-xs'
+                      : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50/70 text-slate-800'
                   }`}
                 >
-                  {isSelected ? (isMultiple ? '✓' : opt.key) : opt.key}
-                </span>
-
-                <div className="flex-1 text-sm sm:text-base leading-relaxed">
-                  <span className="font-semibold mr-2">{opt.key}.</span>
-                  {opt.text}
-                </div>
-
-                {isSelected && (
-                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-white/80 text-slate-700 shrink-0 border border-slate-200">
-                    已選取
+                  {/* 選取指示圖示 */}
+                  <span
+                    className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 transition-colors mt-0.5 sm:mt-0 ${
+                      isSelected
+                        ? isMultiple
+                          ? 'border border-amber-600 bg-amber-600 text-white'
+                          : 'border border-indigo-600 bg-indigo-600 text-white rounded-full'
+                        : isMultiple
+                        ? 'border border-slate-300 bg-white text-slate-600'
+                        : 'border border-slate-300 bg-white text-slate-600 rounded-full'
+                    }`}
+                  >
+                    {isSelected ? (isMultiple ? '✓' : opt.key) : opt.key}
                   </span>
-                )}
-              </label>
-            );
-          })}
-        </div>
+
+                  <div className="flex-1 text-sm sm:text-base leading-relaxed">
+                    <span className="font-semibold mr-2">{opt.key}.</span>
+                    {opt.text}
+                  </div>
+
+                  {isSelected && (
+                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-white/80 text-slate-700 shrink-0 border border-slate-200">
+                      已選取
+                    </span>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   };
@@ -344,8 +412,8 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
                   {studentId}
                 </span>
               </div>
-              <span className="text-xs text-indigo-600 font-medium truncate max-w-xs block">
-                {examTitle} (總分 {totalScore} 分)
+              <span className="text-xs text-indigo-600 font-medium truncate max-w-sm block">
+                {examTitle} (滿分 {allocation.totalScore} 分 ｜ 選擇 {allocation.choiceCount} 題 · 問答 {allocation.essayCount} 題)
               </span>
             </div>
           </div>

@@ -90,16 +90,29 @@ export const ExamResultView: React.FC<ExamResultViewProps> = ({
           </div>
         </div>
 
-        {/* 配分公式核算列 */}
+        {/* 配分公式與得分結構核算列 */}
         <div className="bg-slate-50 border-b border-slate-200/80 p-4 sm:px-8 text-xs text-slate-700">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <TrendingUp className="w-4 h-4 text-indigo-600 shrink-0" />
-              <span className="font-semibold text-slate-800">配分公式：</span>
-              <span className="text-slate-600">學生總分 = Math.round((答對題數 / 題目總數) × 自訂總分)</span>
-              <code className="bg-white px-2.5 py-1 rounded-md border border-slate-200 text-indigo-700 font-mono font-bold text-xs sm:text-sm">
-                Math.round(({record.correctCount} / {record.totalQuestions}) × {record.configuredTotalScore}) = {record.finalScore} 分
-              </code>
+              <span className="font-semibold text-slate-800">配分與評分：</span>
+              {(record.choiceScoreTotal !== undefined || record.essayScoreTotal !== undefined) ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="bg-indigo-50 text-indigo-800 font-semibold px-2.5 py-1 rounded-md border border-indigo-200">
+                    選擇題：{record.choiceScoreEarned ?? 0} / {record.choiceScoreTotal ?? 0} 分 ({record.choiceCorrectCount ?? 0}/{record.choiceCount ?? 0} 題)
+                  </span>
+                  <span className="bg-purple-50 text-purple-800 font-semibold px-2.5 py-1 rounded-md border border-purple-200">
+                    問答題：{record.essayScoreEarned ?? 0} / {record.essayScoreTotal ?? 0} 分 ({record.essayCorrectCount ?? 0}/{record.essayCount ?? 0} 題)
+                  </span>
+                  <span className="text-slate-500 font-medium">
+                    (問答題答案得完全一致)
+                  </span>
+                </div>
+              ) : (
+                <code className="bg-white px-2.5 py-1 rounded-md border border-slate-200 text-indigo-700 font-mono font-bold text-xs sm:text-sm">
+                  Math.round(({record.correctCount} / {record.totalQuestions}) × {record.configuredTotalScore}) = {record.finalScore} 分
+                </code>
+              )}
             </div>
 
             <div className="flex items-center gap-4 text-xs font-medium">
@@ -142,7 +155,7 @@ export const ExamResultView: React.FC<ExamResultViewProps> = ({
                   className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-slate-100 text-slate-400 rounded-xl border border-slate-200 cursor-not-allowed"
                 >
                   <ShieldAlert className="w-3.5 h-3.5 text-rose-500" />
-                  <span>已達 12 小時上限 (2/2次)</span>
+                  <span>已達 12 小時上限 (1/1次)</span>
                 </button>
               ) : (
                 <button
@@ -157,7 +170,7 @@ export const ExamResultView: React.FC<ExamResultViewProps> = ({
             </div>
           </div>
 
-          {/* 若已達到 12 小時內 2 次測驗上限，顯示提示橫幅 */}
+          {/* 若已達到 12 小時內 1 次測驗上限，顯示提示橫幅 */}
           {!limitStatus.canAttempt && (
             <div
               id="retake-limit-warning"
@@ -166,8 +179,8 @@ export const ExamResultView: React.FC<ExamResultViewProps> = ({
               <div className="flex items-start sm:items-center gap-2">
                 <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5 sm:mt-0" />
                 <span>
-                  <strong>12 小時重複測驗上限提醒：</strong>
-                  同 1 位學生同 1 份測驗題目在 12 小時內最多可重複測驗 2 次，您已達上限。
+                  <strong>12 小時測驗次數上限提醒：</strong>
+                  同 1 位學生同 1 份測驗題目在 12 小時內最多可測驗 1 次，您已達上限。
                   下次開放測驗時間為：
                   <strong className="font-mono text-rose-950 underline mx-1">
                     {limitStatus.formattedNextAllowedTime}
@@ -176,22 +189,7 @@ export const ExamResultView: React.FC<ExamResultViewProps> = ({
                 </span>
               </div>
               <span className="font-mono text-[11px] font-bold bg-rose-200/80 text-rose-900 px-2 py-0.5 rounded-md shrink-0 self-start sm:self-auto">
-                已達 2/2 次上限
-              </span>
-            </div>
-          )}
-
-          {/* 若剛完成第 1 次，提示尚餘 1 次機會 */}
-          {limitStatus.canAttempt && limitStatus.attemptsInWindow === 1 && (
-            <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-2xl flex items-center justify-between gap-2 text-xs text-amber-900">
-              <div className="flex items-center gap-2">
-                <History className="w-4 h-4 text-amber-600 shrink-0" />
-                <span>
-                  您在 12 小時內已完成 1 次測驗，若點擊「重新測驗」進行第 2 次測驗後，將暫時達到作答上限並鎖定 12 小時。
-                </span>
-              </div>
-              <span className="font-mono text-[11px] font-bold bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded-md shrink-0">
-                尚餘 1 次
+                已達 1/1 次上限
               </span>
             </div>
           )}
@@ -252,6 +250,7 @@ export const ExamResultView: React.FC<ExamResultViewProps> = ({
         {/* 題目清單 */}
         <div className="space-y-6 divide-y divide-slate-100">
           {filteredResults.map((item, idx) => {
+            const isEssay = item.type === 'essay' || (!item.options || item.options.length === 0);
             const studentNorm = normalizeAnswerString(item.selectedOption);
             const correctNorm = normalizeAnswerString(item.correctAnswer);
             const studentSelectedKeys = studentNorm.split('');
@@ -275,12 +274,14 @@ export const ExamResultView: React.FC<ExamResultViewProps> = ({
                       <div className="flex items-center gap-2 mb-1">
                         <span
                           className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${
-                            item.isMultiple
+                            isEssay
+                              ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                              : item.isMultiple
                               ? 'bg-amber-100 text-amber-900'
                               : 'bg-blue-100 text-blue-900'
                           }`}
                         >
-                          {item.isMultiple ? '複選題' : '單選題'}
+                          {isEssay ? '問答題' : item.isMultiple ? '複選題' : '單選題'}
                         </span>
                         <span className="text-[11px] text-slate-400 font-mono">
                           (題庫編號 #{item.originalQuestionNumber})
@@ -309,9 +310,9 @@ export const ExamResultView: React.FC<ExamResultViewProps> = ({
 
                 {/* 醒目答案對照橫幅 (紅色標示學生錯答、綠色標示正確答案) */}
                 <div className="pl-0 sm:pl-11">
-                  <div className="flex flex-wrap items-center gap-3 p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs sm:text-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs sm:text-sm">
                     {/* 學生答案標記 */}
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-semibold text-slate-700">學生答案：</span>
                       <span
                         className={`font-bold px-3 py-1 rounded-xl text-xs sm:text-sm flex items-center gap-1 ${
@@ -321,28 +322,35 @@ export const ExamResultView: React.FC<ExamResultViewProps> = ({
                         }`}
                       >
                         {item.isCorrect ? '✓' : '✗'}
-                        {formatAnswerDisplay(item.selectedOption)}
+                        {isEssay ? (item.selectedOption || '(未填寫)') : formatAnswerDisplay(item.selectedOption)}
                         <span className="text-[11px] font-normal opacity-90">
-                          ({item.isCorrect ? '答對' : '答錯'})
+                          ({item.isCorrect ? '完全一致 · 答對' : '不一致 · 答錯'})
                         </span>
                       </span>
                     </div>
 
-                    <span className="text-slate-300">｜</span>
+                    <span className="text-slate-300 hidden sm:inline">｜</span>
 
                     {/* 正確答案標記 (醒目翠綠色) */}
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-semibold text-slate-700">正確答案：</span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-semibold text-slate-700">標準正確答案：</span>
                       <span className="font-bold px-3 py-1 rounded-xl text-xs sm:text-sm bg-emerald-100 text-emerald-900 border border-emerald-400 flex items-center gap-1">
                         <Check className="w-3.5 h-3.5 text-emerald-600" />
-                        {formatAnswerDisplay(item.correctAnswer)}
+                        {isEssay ? item.correctAnswer : formatAnswerDisplay(item.correctAnswer)}
                       </span>
                     </div>
+
+                    {isEssay && (
+                      <span className="text-[11px] text-purple-700 font-medium sm:ml-auto">
+                        ※ 評改規則：答案得完全一致
+                      </span>
+                    )}
                   </div>
                 </div>
 
-                {/* 選項列表清單（直觀標記學生選擇與標準解答） */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 pl-0 sm:pl-11">
+                {/* 選項列表清單（僅在選擇題且具有選項時顯示） */}
+                {!isEssay && item.options && item.options.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 pl-0 sm:pl-11">
                   {item.options.map((opt) => {
                     const isStudentChoice = studentSelectedKeys.includes(opt.key);
                     const isCorrectOption = correctKeys.includes(opt.key);
@@ -402,6 +410,7 @@ export const ExamResultView: React.FC<ExamResultViewProps> = ({
                     );
                   })}
                 </div>
+                )}
 
                 {/* 詳解說明區塊 */}
                 <div className="pl-0 sm:pl-11">

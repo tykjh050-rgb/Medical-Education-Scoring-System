@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Question, StudentExamRecord } from '../../types';
+import { Question, StudentExamRecord, ExamPaper } from '../../types';
 import { fisherYatesShuffle } from '../../utils/shuffle';
 import { checkExamAttemptLimit } from '../../utils/examLimiter';
 import { StudentEntryCard } from './StudentEntryCard';
@@ -9,19 +9,29 @@ import { ExamResultView } from './ExamResultView';
 interface StudentExamProps {
   questions: Question[];
   totalScore: number;
+  choiceScore?: number;
+  essayScore?: number;
   examTitle: string;
   studentRecords: StudentExamRecord[];
   onRecordSubmitted: (record: StudentExamRecord) => void;
   onGoToTeacherDashboard: () => void;
+  examPapers?: ExamPaper[];
+  activeExamId?: string;
+  onSelectExam?: (id: string) => void;
 }
 
 export const StudentExam: React.FC<StudentExamProps> = ({
   questions,
   totalScore,
+  choiceScore,
+  essayScore,
   examTitle,
   studentRecords,
   onRecordSubmitted,
   onGoToTeacherDashboard,
+  examPapers,
+  activeExamId,
+  onSelectExam,
 }) => {
   const [phase, setPhase] = useState<'entry' | 'taking' | 'result'>('entry');
   const [studentInfo, setStudentInfo] = useState<{ name: string; id: string }>({ name: '', id: '' });
@@ -49,7 +59,7 @@ export const StudentExam: React.FC<StudentExamProps> = ({
   };
 
   const handleRetakeExam = () => {
-    // 檢查同 1 位學生同 1 份測驗題目在 12 小時內是否已達 2 次上限
+    // 檢查同 1 位學生同 1 份測驗題目在 12 小時內是否已達 1 次上限
     const limitStatus = checkExamAttemptLimit(studentRecords, studentInfo.id, examTitle);
     if (!limitStatus.canAttempt) {
       return;
@@ -73,9 +83,14 @@ export const StudentExam: React.FC<StudentExamProps> = ({
           examTitle={examTitle}
           questions={questions}
           totalScore={totalScore}
+          choiceScore={choiceScore}
+          essayScore={essayScore}
           records={studentRecords}
           onStartExam={handleStartExam}
           onOpenTeacherDashboard={onGoToTeacherDashboard}
+          examPapers={examPapers}
+          activeExamId={activeExamId}
+          onSelectExam={onSelectExam}
         />
       )}
 
@@ -85,6 +100,8 @@ export const StudentExam: React.FC<StudentExamProps> = ({
           studentId={studentInfo.id}
           examTitle={examTitle}
           totalScore={totalScore}
+          choiceScore={choiceScore}
+          essayScore={essayScore}
           shuffledQuestions={shuffledQuestions}
           onFinishExam={handleFinishExam}
           onExit={handleBackToEntry}

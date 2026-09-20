@@ -1,6 +1,6 @@
 import { StudentExamRecord } from '../types';
 
-export const MAX_EXAM_ATTEMPTS_PER_WINDOW = 2; // 12 小時內最多 2 次
+export const MAX_EXAM_ATTEMPTS_PER_WINDOW = 1; // 12 小時內最多 1 次
 export const EXAM_TIME_WINDOW_HOURS = 12;      // 時間窗口 12 小時
 export const EXAM_TIME_WINDOW_MS = EXAM_TIME_WINDOW_HOURS * 60 * 60 * 1000;
 
@@ -9,7 +9,7 @@ export interface ExamAttemptLimitStatus {
   canAttempt: boolean;
   /** 12 小時內已測驗次數 */
   attemptsInWindow: number;
-  /** 12 小時內最高可測驗次數 (固定為 2 次) */
+  /** 12 小時內最高可測驗次數 (固定為 1 次) */
   maxAttempts: number;
   /** 時間窗口小時數 (12 小時) */
   timeWindowHours: number;
@@ -113,7 +113,7 @@ export function checkExamAttemptLimit(
   let message = '';
 
   if (!canAttempt) {
-    // 達到上限 (已測驗 2 次或以上)，計算最早一筆紀錄何時過期解除限制
+    // 達到上限 (已測驗 1 次或以上)，計算最早一筆紀錄何時過期解除限制
     // 取在窗口內最早的那一筆 (第 1 筆)
     const earliestRecord = recordsInWindow[0];
     const earliestTimestamp = parseDateStringToTimestamp(earliestRecord.submittedAt);
@@ -133,11 +133,9 @@ export function checkExamAttemptLimit(
       remainingTimeString = `${minutes} 分鐘`;
     }
 
-    message = `此學號於 ${EXAM_TIME_WINDOW_HOURS} 小時內已累積測驗 ${attemptsInWindow} 次（已達最高上限 ${MAX_EXAM_ATTEMPTS_PER_WINDOW} 次）。依規定暫時無法重複測驗，預計解禁時間為 ${formattedNextAllowedTime}（約需等待 ${remainingTimeString}）。`;
-  } else if (attemptsInWindow === 1) {
-    message = `您在過去 ${EXAM_TIME_WINDOW_HOURS} 小時內已完成 1 次測驗，尚餘最後 1 次測驗機會（上限 ${MAX_EXAM_ATTEMPTS_PER_WINDOW} 次）。`;
+    message = `此學號於 ${EXAM_TIME_WINDOW_HOURS} 小時內已完成測驗（已達最高上限 ${MAX_EXAM_ATTEMPTS_PER_WINDOW} 次）。依規定暫時無法重複測驗，預計解禁時間為 ${formattedNextAllowedTime}（約需等待 ${remainingTimeString}）。`;
   } else {
-    message = `您在 ${EXAM_TIME_WINDOW_HOURS} 小時內尚未進行本測驗，共可進行 ${MAX_EXAM_ATTEMPTS_PER_WINDOW} 次測驗。`;
+    message = `您在 ${EXAM_TIME_WINDOW_HOURS} 小時內尚未進行本測驗，共可進行 ${MAX_EXAM_ATTEMPTS_PER_WINDOW} 次測驗（交卷後鎖定 ${EXAM_TIME_WINDOW_HOURS} 小時）。`;
   }
 
   return {

@@ -19,10 +19,12 @@ import {
   X,
   Database,
 } from 'lucide-react';
-import { Question } from '../../types';
+import { Question, ExamPaper } from '../../types';
 import { parseQuestionFile, downloadQuestionTemplate } from '../../utils/fileParser';
 import { DEFAULT_SAMPLE_QUESTIONS } from '../../data/sampleQuestions';
+import { resolveScoreAllocation } from '../../utils/scoring';
 import { ExamContentEditorModal } from './ExamContentEditorModal';
+import { ExamPaperSelectorDropdown } from './ExamPaperSelectorDropdown';
 import { Edit3 } from 'lucide-react';
 
 interface QuestionUploaderProps {
@@ -30,10 +32,20 @@ interface QuestionUploaderProps {
   onUpdateQuestions: (newQuestions: Question[]) => void;
   totalScore: number;
   onUpdateTotalScore: (score: number) => void;
+  choiceScore?: number;
+  essayScore?: number;
+  onUpdateChoiceScore?: (score: number) => void;
+  onUpdateEssayScore?: (score: number) => void;
   examTitle: string;
   onUpdateExamTitle: (title: string) => void;
   onSwitchToStudentExam?: () => void;
   onOpenExamInspector?: () => void;
+  examPapers: ExamPaper[];
+  activeExamId: string;
+  onSelectExam: (id: string) => void;
+  onDeleteExam: (id: string) => void;
+  onAddNewExam: () => void;
+  onAddNewExamWithQuestions: (newExam: ExamPaper) => void;
 }
 
 interface ImportPreviewData {
@@ -49,10 +61,20 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({
   onUpdateQuestions,
   totalScore,
   onUpdateTotalScore,
+  choiceScore,
+  essayScore,
+  onUpdateChoiceScore,
+  onUpdateEssayScore,
   examTitle,
   onUpdateExamTitle,
   onSwitchToStudentExam,
   onOpenExamInspector,
+  examPapers,
+  activeExamId,
+  onSelectExam,
+  onDeleteExam,
+  onAddNewExam,
+  onAddNewExamWithQuestions,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -66,12 +88,14 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({
   // 檢視與線上增刪修改試題視窗狀態
   const [showExamInspectorModal, setShowExamInspectorModal] = useState(false);
 
+  const allocation = resolveScoreAllocation(questions, totalScore, choiceScore, essayScore);
+
   const handleOpenInspector = onOpenExamInspector || (() => setShowExamInspectorModal(true));
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /**
-   * 處理檔案上傳與自動解析
+   * 處理檔案上傳與自動解析 (上傳考卷檔案後自動新增在選單內)
    */
   const handleFileUpload = async (file: File) => {
     setIsProcessing(true);
@@ -81,6 +105,19 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({
     setIsProcessing(false);
 
     if (result.success && result.questions.length > 0) {
+      // 取得自檔名產生的試卷標題 (去除副檔名)
+      const rawName = file.name.replace(/\.[^/.]+$/, '').trim();
+      const cleanTitle = rawName || '匯入試卷題庫';
+
+      const newExamPaper: ExamPaper = {
+        id: 'exam_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+        title: cleanTitle,
+        totalScore: 100,
+        questions: result.questions,
+        createdAt: new Date().toISOString(),
+        fileName: file.name,
+      };
+
       // 1. 設定預覽資料
       setPreviewData({
         fileName: file.name,
@@ -90,12 +127,12 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({
         questions: result.questions,
       });
 
-      // 2. 自動儲存為當次考試題庫
-      onUpdateQuestions(result.questions);
+      // 2. 自動新增至試卷選單內並自動選取此試卷
+      onAddNewExamWithQuestions(newExamPaper);
 
       setFeedback({
         type: 'success',
-        message: `成功解析並匯入 ${result.count} 題試題（來自「${file.name}」）！已自動儲存為當次考試題庫。`,
+        message: `成功解析並匯入 ${result.count} 題試題！已自動為您在下拉選單中建立新試卷「${cleanTitle}」，並設為當前試卷。`,
       });
     } else {
       setFeedback({
@@ -144,56 +181,125 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* 左側：測驗總分與參數 */}
         <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
-          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-            <Sliders className="w-4 h-4 text-indigo-600" />
-            <h3 className="font-bold text-slate-800 text-sm">測驗基礎參數設定</h3>
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-indigo-600" />
+              <h3 className="font-bold text-slate-800 text-sm">試卷題庫與參數管理</h3>
+            </div>
+            <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
+              多卷下拉管理
+            </span>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              測驗單元名稱
-            </label>
-            <input
-              id="input-exam-title"
-              type="text"
-              value={examTitle}
-              onChange={(e) => onUpdateExamTitle(e.target.value)}
-              className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50/50"
-              placeholder="例如：第一次定期評量 - 自然與科技"
-            />
-          </div>
+          {/* 可管理的下拉式選單 (選單內有刪除鈕、新增空白試卷與切換) */}
+          <ExamPaperSelectorDropdown
+            examPapers={examPapers}
+            activeExamId={activeExamId}
+            onSelectExam={onSelectExam}
+            onDeleteExam={onDeleteExam}
+            onAddNewExam={onAddNewExam}
+            onRequestUpload={() => fileInputRef.current?.click()}
+          />
 
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-semibold text-slate-700">
-                老師自訂總分（分）
+          <div className="pt-2 border-t border-slate-100 space-y-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                編輯當前試卷名稱
               </label>
-              <span className="text-[11px] text-indigo-600 font-medium">
-                單題配分約 {questions.length > 0 ? (totalScore / questions.length).toFixed(2) : 0} 分
+              <input
+                id="input-exam-title"
+                type="text"
+                value={examTitle}
+                onChange={(e) => onUpdateExamTitle(e.target.value)}
+                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50/50 font-semibold text-slate-800"
+                placeholder="例如：第一次定期評量 - 自然與科技"
+              />
+            </div>
+
+          {/* 配分欄與選擇題分開 */}
+          <div className="space-y-3 pt-1">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+              <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Sliders className="w-3.5 h-3.5 text-indigo-600" />
+                <span>試卷配分欄（選擇題與問答題分開）</span>
+              </label>
+              <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200">
+                滿分 {allocation.totalScore} 分
               </span>
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                id="input-total-score"
-                type="number"
-                min="10"
-                max="1000"
-                step="5"
-                value={totalScore}
-                onChange={(e) => onUpdateTotalScore(Math.max(1, Number(e.target.value) || 100))}
-                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-slate-800"
-              />
-              <span className="text-sm text-slate-500 font-medium shrink-0">分</span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-2 leading-relaxed bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-              💡 學生得分將依核心公式核算：
-              <code className="text-indigo-700 font-mono font-bold block mt-1">
-                Math.round((答對題數 / {questions.length || 'N'}) × {totalScore})
-              </code>
-            </p>
-          </div>
 
-          <div className="pt-1 space-y-2">
+            {/* 選擇題配分區 */}
+            <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                  選擇題總配分（共 {allocation.choiceCount} 題）
+                </span>
+                <span className="text-[11px] font-semibold text-indigo-700">
+                  每題 {allocation.perChoiceScore} 分
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  id="input-choice-score"
+                  type="number"
+                  min="0"
+                  max="1000"
+                  step="5"
+                  value={allocation.choiceTotalScore}
+                  onChange={(e) => {
+                    const val = Math.max(0, Number(e.target.value) || 0);
+                    if (onUpdateChoiceScore) {
+                      onUpdateChoiceScore(val);
+                    } else {
+                      onUpdateTotalScore(val + (essayScore || 0));
+                    }
+                  }}
+                  className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-slate-800 bg-white"
+                />
+                <span className="text-xs text-slate-500 font-medium shrink-0">分</span>
+              </div>
+            </div>
+
+            {/* 問答題配分區 */}
+            <div className="bg-purple-50/50 p-3 rounded-2xl border border-purple-200 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-purple-900 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                  問答題總配分（共 {allocation.essayCount} 題）
+                </span>
+                <span className="text-[11px] font-semibold text-purple-700">
+                  每題 {allocation.perEssayScore} 分
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  id="input-essay-score"
+                  type="number"
+                  min="0"
+                  max="1000"
+                  step="5"
+                  value={allocation.essayTotalScore}
+                  onChange={(e) => {
+                    const val = Math.max(0, Number(e.target.value) || 0);
+                    if (onUpdateEssayScore) {
+                      onUpdateEssayScore(val);
+                    } else {
+                      onUpdateTotalScore((choiceScore || 0) + val);
+                    }
+                  }}
+                  className="w-full px-3 py-1.5 text-sm border border-purple-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 font-bold text-slate-800 bg-white"
+                />
+                <span className="text-xs text-slate-500 font-medium shrink-0">分</span>
+              </div>
+              <div className="text-[11px] text-purple-800 font-semibold flex items-center gap-1 pt-0.5">
+                <span>※ 問答題評分規則：答案得完全一致</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="pt-1 space-y-2">
             <button
               id="btn-inspect-exam-modal-left"
               type="button"
@@ -697,6 +803,11 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({
           questions={questions}
           onUpdateQuestions={onUpdateQuestions}
           totalScore={totalScore}
+          onUpdateTotalScore={onUpdateTotalScore}
+          choiceScore={choiceScore}
+          essayScore={essayScore}
+          onUpdateChoiceScore={onUpdateChoiceScore}
+          onUpdateEssayScore={onUpdateEssayScore}
           examTitle={examTitle}
           onUpdateExamTitle={onUpdateExamTitle}
           onSwitchToStudentExam={onSwitchToStudentExam}

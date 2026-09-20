@@ -16,6 +16,8 @@ interface NavbarProps {
   questionCount: number;
   totalScore: number;
   isTeacherAuthenticated?: boolean;
+  examTitle?: string;
+  examPaperCount?: number;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -24,6 +26,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   questionCount,
   totalScore,
   isTeacherAuthenticated = false,
+  examTitle,
+  examPaperCount,
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-sm border-b border-slate-200">
@@ -107,9 +111,26 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div className="bg-slate-50 border-t border-slate-200/70 px-4 sm:px-6 lg:px-8 py-2 text-xs text-slate-600">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-4 flex-wrap">
+            {examTitle && (
+              <>
+                <span className="inline-flex items-center gap-1.5 font-medium text-slate-800">
+                  <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
+                  當前試卷：
+                  <span className="text-slate-900 font-bold max-w-[220px] truncate" title={examTitle}>
+                    {examTitle}
+                  </span>
+                  {typeof examPaperCount === 'number' && examPaperCount > 1 && (
+                    <span className="text-[10px] bg-indigo-100 text-indigo-700 font-semibold px-1.5 py-0.5 rounded-full">
+                      共 {examPaperCount} 卷
+                    </span>
+                  )}
+                </span>
+                <span className="text-slate-300">|</span>
+              </>
+            )}
             <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
               <FileSpreadsheet className="w-3.5 h-3.5 text-indigo-600" />
-              目前考題庫：
+              目前題庫：
               <span className="text-indigo-600 font-bold">{questionCount} 題</span>
             </span>
             <span className="text-slate-300">|</span>
@@ -117,7 +138,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               總分設定：
               <span className="text-emerald-700 font-bold">{totalScore} 分</span>
               <span className="text-slate-400 text-[11px]">
-                (每題均分 {questionCount > 0 ? (totalScore / questionCount).toFixed(2) : 0} 分)
+                (每題約 {questionCount > 0 ? (totalScore / questionCount).toFixed(2) : 0} 分)
               </span>
             </span>
           </div>

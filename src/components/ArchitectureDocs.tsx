@@ -260,7 +260,7 @@ function fisherYatesShuffle<T>(array: readonly T[]): T[] {
         <div className="bg-indigo-50/70 border border-indigo-200 p-4 rounded-xl space-y-2 text-xs text-slate-700">
           <div className="font-bold text-indigo-950 flex items-center gap-2">
             <ShieldAlert className="w-4 h-4 text-indigo-700" />
-            <span>重複測驗次數防護規範：同 1 位學生同 1 份測驗題目 12 小時內最多重複測驗 2 次</span>
+            <span>測驗次數防護規範：同 1 位學生同 1 份測驗題目 12 小時內最多測驗 1 次</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
             <div className="bg-white p-3 rounded-lg border border-indigo-100 space-y-1">
@@ -272,7 +272,7 @@ function fisherYatesShuffle<T>(array: readonly T[]): T[] {
             <div className="bg-white p-3 rounded-lg border border-indigo-100 space-y-1">
               <strong className="text-indigo-900 block font-semibold">2. 12 小時滑動時間窗口</strong>
               <p className="text-slate-600 text-[11px]">
-                自第一次測驗交卷起算 12 小時窗口，滿 2 次後自動鎖定，直到最早一次紀錄滿 12 小時方自動解除 1 次額度。
+                自學生測驗交卷起算 12 小時窗口，滿 1 次即自動鎖定，直到該次紀錄滿 12 小時方自動解除額度。
               </p>
             </div>
             <div className="bg-white p-3 rounded-lg border border-indigo-100 space-y-1">

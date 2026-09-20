@@ -96,6 +96,17 @@ export function parseJsonContent(jsonString: string): ParseResult {
         });
       }
 
+      const rawType = String(
+        item.type || item.question_type || item.題型 || item.類型 || ''
+      ).trim().toLowerCase();
+      const isEssay =
+        rawType.includes('essay') ||
+        rawType.includes('問答') ||
+        rawType.includes('簡答') ||
+        rawType.includes('qa') ||
+        rawType.includes('text') ||
+        (options.length === 0 && Boolean(item.correct_answer || item.correctAnswer || item.answer || item.正確答案));
+
       const prompt =
         item.question_text ||
         item.prompt ||
@@ -103,13 +114,19 @@ export function parseJsonContent(jsonString: string): ParseResult {
         item.題目 ||
         item.title ||
         `第 ${index + 1} 題`;
-      const correctAnswer = String(
+
+      const rawAns =
         item.correct_answer ||
         item.correctAnswer ||
         item.answer ||
         item.正確答案 ||
-        'A'
-      ).trim().toUpperCase();
+        (isEssay ? '' : 'A');
+
+      // 問答題保留原字串（去除首尾空白），選擇題轉大寫
+      const correctAnswer = isEssay
+        ? String(rawAns).trim()
+        : String(rawAns).trim().toUpperCase();
+
       const explanation =
         item.explanation ||
         item.analysis ||
@@ -117,13 +134,21 @@ export function parseJsonContent(jsonString: string): ParseResult {
         item.說明 ||
         '暫無解析';
 
+      let finalType: 'single' | 'multiple' | 'essay' = 'single';
+      if (isEssay) {
+        finalType = 'essay';
+      } else if (rawType.includes('multi') || rawType.includes('複選') || rawType.includes('多選') || correctAnswer.includes(',')) {
+        finalType = 'multiple';
+      }
+
       return {
         id: item.id ? String(item.id) : `imported-${Date.now()}-${index + 1}`,
         questionNumber: typeof item.questionNumber === 'number' ? item.questionNumber : (item.question_number || index + 1),
         prompt: String(prompt),
-        options,
+        options: isEssay ? [] : options,
         correctAnswer,
         explanation: String(explanation),
+        type: finalType,
       };
     });
 
@@ -197,8 +222,22 @@ export function parseSpreadsheetBuffer(buffer: ArrayBuffer): ParseResult {
         options = parseSingleOptionsField(singleOptionsVal);
       }
 
+      // 檢測題型欄位 (支援 type, question_type, 題型, 類型)
+      const rawType = String(
+        findValue(row, ['type', 'question_type', 'questiontype', '題型', '類型', '題型分類']) || ''
+      ).trim().toLowerCase();
+
+      const isExplicitEssay =
+        rawType.includes('essay') ||
+        rawType.includes('問答') ||
+        rawType.includes('簡答') ||
+        rawType.includes('qa') ||
+        rawType.includes('text') ||
+        String(prompt).includes('【問答題】') ||
+        String(prompt).includes('【簡答題】');
+
       // 若 options 單一欄位未解析出選項，嘗試獨立欄位 (option_a, option_b, etc.)
-      if (options.length === 0) {
+      if (options.length === 0 && !isExplicitEssay) {
         const letters = ['A', 'B', 'C', 'D', 'E', 'F'];
         letters.forEach((l) => {
           const optVal = findValue(row, [
@@ -217,15 +256,8 @@ export function parseSpreadsheetBuffer(buffer: ArrayBuffer): ParseResult {
         });
       }
 
-      // 如果完全無選項，給予預設佔位
-      if (options.length === 0) {
-        options = [
-          { key: 'A', text: '選項 A' },
-          { key: 'B', text: '選項 B' },
-          { key: 'C', text: '選項 C' },
-          { key: 'D', text: '選項 D' },
-        ];
-      }
+      // 判斷是否為問答題
+      const isEssay = isExplicitEssay || options.length === 0;
 
       // 3. 正確答案欄位 (優先匹配 correct_answer)
       const rawAns = findValue(row, [
@@ -237,8 +269,22 @@ export function parseSpreadsheetBuffer(buffer: ArrayBuffer): ParseResult {
         '答案',
         'answer',
         '正解',
-      ]) || 'A';
-      const correctAnswer = String(rawAns).trim().toUpperCase();
+      ]) || (isEssay ? '' : 'A');
+
+      // 問答題保留原字串（去除首尾空白），選擇題轉大寫
+      const correctAnswer = isEssay
+        ? String(rawAns).trim()
+        : String(rawAns).trim().toUpperCase();
+
+      // 如果是選擇題且完全無選項，給予預設佔位
+      if (!isEssay && options.length === 0) {
+        options = [
+          { key: 'A', text: '選項 A' },
+          { key: 'B', text: '選項 B' },
+          { key: 'C', text: '選項 C' },
+          { key: 'D', text: '選項 D' },
+        ];
+      }
 
       // 4. 解析說明欄位
       const rawExp = findValue(row, [
@@ -251,13 +297,21 @@ export function parseSpreadsheetBuffer(buffer: ArrayBuffer): ParseResult {
       ]) || '無解析說明';
       const explanation = String(rawExp).trim();
 
+      let finalType: 'single' | 'multiple' | 'essay' = 'single';
+      if (isEssay) {
+        finalType = 'essay';
+      } else if (rawType.includes('multi') || rawType.includes('複選') || rawType.includes('多選') || correctAnswer.includes(',')) {
+        finalType = 'multiple';
+      }
+
       questions.push({
         id: `q-${Date.now()}-${index + 1}`,
         questionNumber,
         prompt: String(prompt).trim(),
-        options,
+        options: isEssay ? [] : options,
         correctAnswer,
         explanation,
+        type: finalType,
       });
     });
 
@@ -398,6 +452,7 @@ export function downloadQuestionTemplate(format: 'xlsx' | 'csv' | 'json') {
     },
     {
       question_number: 4,
+      question_type: '複選題',
       question_text: '【複選題】下列哪些屬於常見的主流關聯式資料庫管理系統（RDBMS）？',
       option_a: 'PostgreSQL',
       option_b: 'MongoDB',
@@ -406,13 +461,36 @@ export function downloadQuestionTemplate(format: 'xlsx' | 'csv' | 'json') {
       correct_answer: 'A,C',
       explanation: 'PostgreSQL 與 MySQL 屬於標準 SQL 關聯式資料庫；MongoDB 屬於文件型 NoSQL，Redis 為快取/鍵值資料庫。',
     },
+    {
+      question_number: 5,
+      question_type: '問答題',
+      question_text: '【問答題】請寫出在計算機網路中負責解析主機域名對應 IP 位址之協定名稱英文簡稱（3 個英文字母大寫）。',
+      option_a: '',
+      option_b: '',
+      option_c: '',
+      option_d: '',
+      correct_answer: 'DNS',
+      explanation: 'Domain Name System（網域名稱系統，簡稱 DNS）。問答題評改規則：答案得完全一致。',
+    },
+    {
+      question_number: 6,
+      question_type: '問答題',
+      question_text: '【問答題】綠色植物進行光合作用吸收光能之最主要天然色素名稱為何？',
+      option_a: '',
+      option_b: '',
+      option_c: '',
+      option_d: '',
+      correct_answer: '葉綠素',
+      explanation: '葉綠素為植物進行光合作用吸收藍紫與紅光之最主要色素分子。問答題評改規則：答案得完全一致。',
+    },
   ];
 
   if (format === 'json') {
     const jsonFormatted = standardFieldsData.map((d) => ({
       question_number: d.question_number,
+      type: d.question_type === '問答題' ? 'essay' : d.question_type === '複選題' ? 'multiple' : 'single',
       question_text: d.question_text,
-      options: [
+      options: d.question_type === '問答題' ? [] : [
         { key: 'A', text: d.option_a },
         { key: 'B', text: d.option_b },
         { key: 'C', text: d.option_c },
@@ -422,7 +500,7 @@ export function downloadQuestionTemplate(format: 'xlsx' | 'csv' | 'json') {
       explanation: d.explanation,
     }));
     const blob = new Blob([JSON.stringify(jsonFormatted, null, 2)], { type: 'application/json' });
-    triggerDownload(blob, '試題匯入範本_question_template.json');
+    triggerDownload(blob, '試題匯入範本_含問答題_question_template.json');
     return;
   }
 
@@ -433,6 +511,7 @@ export function downloadQuestionTemplate(format: 'xlsx' | 'csv' | 'json') {
   // 也提供傳統中文欄位的工作表供教師對照
   const chineseFieldsData = standardFieldsData.map((d) => ({
     題號: d.question_number,
+    題型: d.question_type,
     題目: d.question_text,
     選項A: d.option_a,
     選項B: d.option_b,
@@ -448,11 +527,11 @@ export function downloadQuestionTemplate(format: 'xlsx' | 'csv' | 'json') {
     const csvOutput = XLSX.utils.sheet_to_csv(ws);
     // 加入 UTF-8 BOM 避免 Excel 開啟 CSV 中文亂碼
     const blob = new Blob(['\uFEFF' + csvOutput], { type: 'text/csv;charset=utf-8;' });
-    triggerDownload(blob, '試題匯入範本_question_template.csv');
+    triggerDownload(blob, '試題匯入範本_含問答題_question_template.csv');
   } else {
     const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    triggerDownload(blob, '試題匯入範本_question_template.xlsx');
+    triggerDownload(blob, '試題匯入範本_含問答題_question_template.xlsx');
   }
 }
 
